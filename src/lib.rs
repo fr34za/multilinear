@@ -2,3 +2,4 @@
 pub mod constraints;
 pub mod expr;
 pub mod field;
+pub mod trace;
