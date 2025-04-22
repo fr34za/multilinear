@@ -32,6 +32,12 @@ impl<F> Trace<F> {
     }
 }
 
+impl<F: Copy> Trace<F> {
+    pub fn get(&self, i: usize, j: usize) -> F {
+        self.matrix[i * self.width + j]
+    }
+}
+
 // TODO
 pub struct Commitment<F>(PhantomData<F>);
 
