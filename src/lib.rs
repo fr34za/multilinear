@@ -4,5 +4,6 @@ pub mod evaluation;
 pub mod expr;
 pub mod field;
 pub mod polynomials;
+pub mod sumcheck;
 pub mod system;
 pub mod trace;

@@ -63,13 +63,13 @@ impl<F: Field> Trace<F> {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Mask {
-    index: usize,
-    n_vars: usize,
+pub(crate) struct Mask {
+    pub(crate) index: usize,
+    pub(crate) n_vars: usize,
 }
 
 impl Mask {
-    fn evaluate<F: Field>(&self, points: &[F]) -> F {
+    pub(crate) fn evaluate<F: Field>(&self, points: &[F]) -> F {
         let n_vars = self.n_vars;
         let index = self.index;
         let one = F::from(1u64);
