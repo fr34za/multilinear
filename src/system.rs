@@ -118,6 +118,7 @@ impl<F: Field> ChallengeSet<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct Transcript {
     inner: ChaCha8Rng,
 }

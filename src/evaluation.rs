@@ -1,4 +1,4 @@
-use crate::{constraints::ConstrainSet, expr::Expr, field::Field, system::System, trace::Trace};
+use crate::{constraints::ConstraintSet, expr::Expr, field::Field, system::System, trace::Trace};
 
 impl<F: Field> System<F> {
     pub fn evaluate_composition(&self, outputs: &[F]) -> F {
@@ -16,7 +16,7 @@ impl<F: Field> System<F> {
     }
 }
 
-impl<F: Field> ConstrainSet<F> {
+impl<F: Field> ConstraintSet<F> {
     fn evaluate(&self, values: &[F], randoms: &[F], constraints: &[F]) -> F {
         let n_vars = constraints.len();
         self.constraints()

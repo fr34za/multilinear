@@ -7,11 +7,10 @@ pub struct Trace<F> {
 }
 
 impl<F> Trace<F> {
-    pub fn new(values: Vec<F>, width: usize) -> Trace<F> {
-        assert_eq!(values.len() % width, 0);
-        let height = values.len() / width;
+    pub fn new(matrix: Box<[F]>, width: usize) -> Trace<F> {
+        assert_eq!(matrix.len() % width, 0);
+        let height = matrix.len() / width;
         assert!(height.is_power_of_two());
-        let matrix = values.into();
         Trace {
             matrix,
             height,

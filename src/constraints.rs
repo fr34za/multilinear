@@ -1,6 +1,6 @@
 use crate::expr::Expr;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ConstraintSet<F> {
     // Constraints are of the form `expr = 0`
     constraints: Box<[Expr<F>]>,
@@ -25,13 +25,14 @@ pub struct ConstraintSet<F> {
 impl<F> ConstraintSet<F> {
     pub fn new(
         constraints: Box<[Expr<F>]>,
+        total_columns: usize,
         sum_columns: Box<[usize]>,
         pre_random_columns: usize,
     ) -> Self {
         let log_num_constraints = constraints.len().next_power_of_two().trailing_zeros() as usize;
         let degree = 0;
         let num_randoms = 0;
-        let total_columns = sum_columns
+        let max_column_index = sum_columns
             .iter()
             .copied()
             .max()
@@ -39,17 +40,18 @@ impl<F> ConstraintSet<F> {
         let info = constraints.iter().fold(
             ExprInfo {
                 degree,
-                num_randoms,
-                total_columns,
+                max_random_index: num_randoms,
+                max_column_index,
             },
             |a, b| a.combine(expr_info(b)),
         );
+        assert!(max_column_index < total_columns);
         Self {
             constraints,
             log_num_constraints,
             degree: info.degree,
-            num_randoms: info.num_randoms,
-            total_columns: info.total_columns,
+            num_randoms: info.max_random_index + 1,
+            total_columns,
             pre_random_columns,
             sum_columns,
         }
@@ -87,19 +89,19 @@ impl<F> ConstraintSet<F> {
 #[derive(Clone, Copy)]
 struct ExprInfo {
     degree: usize,
-    num_randoms: usize,
-    total_columns: usize,
+    max_random_index: usize,
+    max_column_index: usize,
 }
 
 impl ExprInfo {
     fn combine(self, b: Self) -> Self {
         let degree = self.degree.max(b.degree);
-        let num_randoms = self.num_randoms.max(b.num_randoms);
-        let total_columns = self.total_columns.max(b.total_columns);
+        let max_random_index = self.max_random_index.max(b.max_random_index);
+        let max_column_index = self.max_column_index.max(b.max_column_index);
         ExprInfo {
             degree,
-            num_randoms,
-            total_columns,
+            max_random_index,
+            max_column_index,
         }
     }
 
@@ -113,18 +115,18 @@ fn expr_info<F>(expr: &Expr<F>) -> ExprInfo {
     match expr {
         Expr::Elem(..) => ExprInfo {
             degree: 0,
-            num_randoms: 0,
-            total_columns: 0,
+            max_random_index: 0,
+            max_column_index: 0,
         },
         Expr::Var(col) => ExprInfo {
             degree: 1,
-            num_randoms: 0,
-            total_columns: *col,
+            max_random_index: 0,
+            max_column_index: *col,
         },
         Expr::Random(random) => ExprInfo {
             degree: 0,
-            num_randoms: *random,
-            total_columns: 0,
+            max_random_index: *random,
+            max_column_index: 0,
         },
         Expr::Add(a, b) => expr_info(a).combine(expr_info(b)),
         Expr::Sub(a, b) => expr_info(a).combine(expr_info(b)),
