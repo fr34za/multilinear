@@ -1,5 +1,6 @@
 use crate::expr::Expr;
 
+#[derive(Clone)]
 pub struct ConstraintSet<F> {
     // Constraints are of the form `expr = 0`
     constraints: Box<[Expr<F>]>,

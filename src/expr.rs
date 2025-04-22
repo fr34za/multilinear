@@ -1,5 +1,6 @@
 use std::ops::{Add, Mul, Sub};
 
+#[derive(Clone)]
 pub enum Expr<F> {
     Elem(F),
     Var(usize),
