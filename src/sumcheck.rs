@@ -196,7 +196,10 @@ impl<F: std::fmt::Debug> std::fmt::Debug for SumcheckPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{constraints::ConstraintSet, expr::Expr, field::Field128 as F, trace::Trace};
+    use crate::{
+        constraints::ConstraintSet, expr::Expr, field::Field128 as F, system::WitnessLayout,
+        trace::Trace,
+    };
     use std::time::Instant;
 
     fn pythagorean_trace<F: Field>() -> Trace<F> {
@@ -232,15 +235,25 @@ mod tests {
         let expr1 = var(0) * var(0) + var(1) * var(1) - var(2) * var(2);
         let expr2 = var(0) + var(1) - var(3);
         let constraints = [expr1, expr2].into();
-        ConstraintSet::new(constraints, 4, [].into(), 0)
+        ConstraintSet::new(constraints)
+    }
+
+    fn pythagorean_layout() -> WitnessLayout {
+        WitnessLayout {
+            columns: 4,
+            randoms: 0,
+            sum_columns: [].into(),
+            pre_random_columns: 0,
+        }
     }
 
     #[test]
     fn sumcheck_test() {
         let set = pythagorean_set();
         let trace = pythagorean_trace();
+        let layout = pythagorean_layout();
         let transcript = &mut Transcript::new();
-        let prover = System::<F>::prover(transcript, set, trace);
+        let prover = System::<F>::prover(transcript, set, layout, trace);
         let verifier_transcript = &mut transcript.clone();
         let tables = &mut prover.build_tables();
         let sum = F::from(0);
@@ -264,8 +277,9 @@ mod tests {
         let trace = Trace::new(matrix.into(), width);
         println!("### PROVING SUMCHECK FOR HEIGHT {height} AND WIDTH {width}",);
         let set = pythagorean_set();
+        let layout = pythagorean_layout();
         let transcript = &mut Transcript::new();
-        let prover = System::<F>::prover(transcript, set, trace);
+        let prover = System::<F>::prover(transcript, set, layout, trace);
         let verifier_transcript = &mut transcript.clone();
         let sum = F::from(0);
 

@@ -10,9 +10,23 @@ use crate::{
 pub struct System<F> {
     constraints: ConstraintSet<F>,
     challenges: ChallengeSet<F>,
-    log_num_rows: usize,
+    layout: WitnessLayout,
     commitment: Commitment<F>,
     trace: Option<Trace<F>>,
+}
+
+pub struct WitnessLayout {
+    // Total number of columns
+    pub columns: usize,
+    // Total number of random challenges
+    pub randoms: usize,
+    // This is the number of initial columns which are used to generate random challenges.
+    // These are the columns that you must fill before knowing the value of the random
+    // challenges. The other columns will have access to the random values.
+    pub pre_random_columns: usize,
+    // Which columns will use the sum check protocol. The sum of all sum columns is
+    // the main result of the trace
+    pub sum_columns: Box<[usize]>,
 }
 
 pub struct ChallengeSet<F> {
@@ -25,15 +39,24 @@ impl<F: Field> System<F> {
     pub fn verifier(
         transcript: &mut Transcript,
         constraints: ConstraintSet<F>,
-        log_num_rows: usize,
+        layout: WitnessLayout,
         commitment: Commitment<F>,
+        log_num_rows: usize,
     ) -> Self {
-        Self::new(transcript, constraints, log_num_rows, commitment, None)
+        Self::new(
+            transcript,
+            constraints,
+            layout,
+            commitment,
+            log_num_rows,
+            None,
+        )
     }
 
     pub fn prover(
         transcript: &mut Transcript,
         constraints: ConstraintSet<F>,
+        layout: WitnessLayout,
         trace: Trace<F>,
     ) -> Self {
         let log_num_rows = trace.height().trailing_zeros() as usize;
@@ -41,8 +64,9 @@ impl<F: Field> System<F> {
         Self::new(
             transcript,
             constraints,
-            log_num_rows,
+            layout,
             commitment,
+            log_num_rows,
             Some(trace),
         )
     }
@@ -50,21 +74,32 @@ impl<F: Field> System<F> {
     fn new(
         transcript: &mut Transcript,
         constraints: ConstraintSet<F>,
-        log_num_rows: usize,
+        layout: WitnessLayout,
         commitment: Commitment<F>,
+        log_num_rows: usize,
         trace: Option<Trace<F>>,
     ) -> Self {
-        let num_randoms = constraints.num_randoms();
-        let log_num_constraints = constraints.log_num_constraints();
+        assert!(constraints.min_num_columns() <= layout.columns);
+        assert!(constraints.min_num_randoms() <= layout.randoms);
+        let num_randoms = layout.randoms;
+        let log_num_constraints = constraints
+            .constraints()
+            .len()
+            .next_power_of_two()
+            .trailing_zeros() as usize;
         let challenges =
             ChallengeSet::new(transcript, num_randoms, log_num_constraints, log_num_rows);
         Self {
             constraints,
             challenges,
-            log_num_rows,
+            layout,
             commitment,
             trace,
         }
+    }
+
+    pub fn num_columns(&self) -> usize {
+        self.layout.columns
     }
 
     pub fn constraints(&self) -> &ConstraintSet<F> {
@@ -73,10 +108,6 @@ impl<F: Field> System<F> {
 
     pub fn challenges(&self) -> &ChallengeSet<F> {
         &self.challenges
-    }
-
-    pub fn log_num_rows(&self) -> usize {
-        self.log_num_rows
     }
 
     pub fn commitment(&self) -> &Commitment<F> {

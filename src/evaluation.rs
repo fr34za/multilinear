@@ -4,7 +4,7 @@ impl<F: Field> System<F> {
     pub fn evaluate_composition(&self, outputs: &[F]) -> F {
         let randoms = self.challenges().trace();
         let constraints = self.challenges().constraint();
-        assert_eq!(outputs.len(), self.constraints().total_columns());
+        assert_eq!(outputs.len(), self.num_columns());
         self.constraints().evaluate(outputs, randoms, constraints)
     }
 
@@ -22,7 +22,7 @@ impl<F: Field> ConstraintSet<F> {
         self.constraints()
             .iter()
             .enumerate()
-            .map(|(index, expr): (usize, &Expr<F>)| {
+            .map(|(index, expr)| {
                 let mask = Mask { index, n_vars };
                 mask.evaluate(constraints) * expr.evaluate(values, randoms)
             })
