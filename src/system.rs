@@ -3,6 +3,7 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::{
     constraints::ConstraintSet,
+    evaluation::Mask,
     field::Field,
     trace::{Commitment, Trace},
 };
@@ -10,6 +11,7 @@ use crate::{
 pub struct System<F> {
     constraints: ConstraintSet<F>,
     challenges: ChallengeSet<F>,
+    constraint_mask: Box<[F]>,
     layout: WitnessLayout,
     commitment: Commitment<F>,
     trace: Option<Trace<F>>,
@@ -89,9 +91,16 @@ impl<F: Field> System<F> {
             .trailing_zeros() as usize;
         let challenges =
             ChallengeSet::new(transcript, num_randoms, log_num_constraints, log_num_rows);
+        let constraint_challenges = &challenges.constraint;
+        let n_vars = constraint_challenges.len();
+        let n_constraints = constraints.constraints().len();
+        let constraint_mask = (0..n_constraints)
+            .map(|index| (Mask { index, n_vars }).evaluate(constraint_challenges))
+            .collect();
         Self {
             constraints,
             challenges,
+            constraint_mask,
             layout,
             commitment,
             trace,
@@ -104,6 +113,10 @@ impl<F: Field> System<F> {
 
     pub fn constraints(&self) -> &ConstraintSet<F> {
         &self.constraints
+    }
+
+    pub fn constraint_mask(&self) -> &[F] {
+        &self.constraint_mask
     }
 
     pub fn challenges(&self) -> &ChallengeSet<F> {

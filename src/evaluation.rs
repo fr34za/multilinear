@@ -3,9 +3,10 @@ use crate::{constraints::ConstraintSet, expr::Expr, field::Field, system::System
 impl<F: Field> System<F> {
     pub fn evaluate_composition(&self, outputs: &[F]) -> F {
         let randoms = self.challenges().trace();
-        let constraints = self.challenges().constraint();
+        let constraint_mask = self.constraint_mask();
         assert_eq!(outputs.len(), self.num_columns());
-        self.constraints().evaluate(outputs, randoms, constraints)
+        self.constraints()
+            .evaluate(outputs, randoms, constraint_mask)
     }
 
     pub fn evaluate_delta(&self, inputs: &[F]) -> F {
@@ -17,15 +18,11 @@ impl<F: Field> System<F> {
 }
 
 impl<F: Field> ConstraintSet<F> {
-    fn evaluate(&self, values: &[F], randoms: &[F], constraints: &[F]) -> F {
-        let n_vars = constraints.len();
+    fn evaluate(&self, values: &[F], randoms: &[F], constraint_mask: &[F]) -> F {
         self.constraints()
             .iter()
-            .enumerate()
-            .map(|(index, expr)| {
-                let mask = Mask { index, n_vars };
-                mask.evaluate(constraints) * expr.evaluate(values, randoms)
-            })
+            .zip(constraint_mask)
+            .map(|(expr, &mask)| mask * expr.evaluate(values, randoms))
             .sum()
     }
 }
