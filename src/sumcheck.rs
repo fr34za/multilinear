@@ -80,7 +80,6 @@ impl<F: Field> System<F> {
                     let m: Box<_> = (0..tables.width)
                         .map(|j| r * tables.matrix_get(i + offset, j))
                         .collect();
-                    // without compilation, this step might be slow
                     let a = self.evaluate_composition(&m);
                     a * d
                 })
@@ -93,7 +92,6 @@ impl<F: Field> System<F> {
                     let m: Box<_> = (0..tables.width)
                         .map(|j| s * tables.matrix_get(i, j) + r * tables.matrix_get(i + offset, j))
                         .collect();
-                    // without compilation, this step might be slow
                     let a = self.evaluate_composition(&m);
                     a * d
                 })
@@ -197,7 +195,9 @@ impl<F: std::fmt::Debug> std::fmt::Debug for SumcheckPolynomial<F> {
 mod tests {
     use super::*;
     use crate::{
-        constraints::ConstraintSet, expr::Expr, field::Field128 as F, system::WitnessLayout,
+        constraints::{ConstraintSet, Expr},
+        field::Field128 as F,
+        system::WitnessLayout,
         trace::Trace,
     };
     use std::time::Instant;
@@ -231,11 +231,11 @@ mod tests {
     }
 
     fn pythagorean_set<F: Field>() -> ConstraintSet<F> {
-        let var = Expr::<F>::var;
-        let expr1 = var(0) * var(0) + var(1) * var(1) - var(2) * var(2);
-        let expr2 = var(0) + var(1) - var(3);
+        let expr1 = Expr(|var, _| var[0] * var[0] + var[1] * var[1] - var[2] * var[2]);
+        let expr2 = Expr(|var, _| var[0] + var[1] - var[3]);
         let constraints = [expr1, expr2].into();
-        ConstraintSet::new(constraints)
+        let degree = 2;
+        ConstraintSet::new(constraints, degree)
     }
 
     fn pythagorean_layout() -> WitnessLayout {

@@ -1,4 +1,4 @@
-use crate::{constraints::ConstraintSet, expr::Expr, field::Field, system::System, trace::Trace};
+use crate::{constraints::ConstraintSet, field::Field, system::System, trace::Trace};
 
 impl<F: Field> System<F> {
     pub fn evaluate_composition(&self, outputs: &[F]) -> F {
@@ -24,19 +24,6 @@ impl<F: Field> ConstraintSet<F> {
             .zip(constraint_mask)
             .map(|(expr, &mask)| mask * expr.evaluate(values, randoms))
             .sum()
-    }
-}
-
-impl<F: Field> Expr<F> {
-    fn evaluate(&self, values: &[F], randoms: &[F]) -> F {
-        match self {
-            Expr::Elem(a) => *a,
-            Expr::Var(col) => values[*col],
-            Expr::Random(random) => randoms[*random],
-            Expr::Add(a, b) => a.evaluate(values, randoms) + b.evaluate(values, randoms),
-            Expr::Sub(a, b) => a.evaluate(values, randoms) - b.evaluate(values, randoms),
-            Expr::Mul(a, b) => a.evaluate(values, randoms) * b.evaluate(values, randoms),
-        }
     }
 }
 

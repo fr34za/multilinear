@@ -81,8 +81,6 @@ impl<F: Field> System<F> {
         log_num_rows: usize,
         trace: Option<Trace<F>>,
     ) -> Self {
-        assert!(constraints.min_num_columns() <= layout.columns);
-        assert!(constraints.min_num_randoms() <= layout.randoms);
         let num_randoms = layout.randoms;
         let log_num_constraints = constraints
             .constraints()
