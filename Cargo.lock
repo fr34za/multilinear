@@ -209,6 +209,7 @@ name = "multilinear"
 version = "0.1.0"
 dependencies = [
  "ark-ff",
+ "generic-array",
  "rand 0.9.1",
  "rand_chacha 0.9.0",
  "sha2",
