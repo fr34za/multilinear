@@ -18,12 +18,12 @@ pub enum Direction {
 #[derive(Debug)]
 pub struct MerkleInclusionPath<T> {
     pub value: T,
-    pub path: Vec<(HashDigest, Direction)>, // Hash do sibling e direção em cada nível
+    pub path: Vec<(HashDigest, Direction)>,
 }
 
 impl<T> Merkle<T>
 where
-    T: AsRef<[u8]>, // Ajustei o trait para permitir operações com slices de bytes
+    T: AsRef<[u8]>,
 {
     pub fn commit(data: Vec<T>) -> Self {
         assert!(
@@ -31,7 +31,7 @@ where
             "Data length must be a power of two"
         );
 
-        let first_layer: Vec<HashDigest> = data.iter().map(|item| Self::hash_leaf(item)).collect();
+        let first_layer: Vec<HashDigest> = data.iter().map(|item| hash_leaf(item)).collect();
 
         let mut layers: Vec<Vec<HashDigest>> = vec![first_layer];
 
@@ -39,7 +39,7 @@ where
             let current_layer = layers.last().unwrap();
             let next_layer: Vec<HashDigest> = current_layer
                 .chunks(2)
-                .map(|pair| Self::hash_node(&pair[0], &pair[1]))
+                .map(|pair| hash_node(&pair[0], &pair[1]))
                 .collect();
             layers.push(next_layer);
         }
@@ -49,19 +49,6 @@ where
 
     pub fn root(&self) -> HashDigest {
         self.layers.last().unwrap()[0]
-    }
-
-    fn hash_leaf(item: &T) -> HashDigest {
-        let mut hasher = Sha256::new();
-        hasher.update(item.as_ref());
-        hasher.finalize()
-    }
-
-    fn hash_node(left: &HashDigest, right: &HashDigest) -> HashDigest {
-        let mut hasher = Sha256::new();
-        hasher.update(left);
-        hasher.update(right);
-        hasher.finalize()
     }
 
     pub fn open(&self, index: usize) -> Option<MerkleInclusionPath<T>>
@@ -87,11 +74,24 @@ where
                 path.push((layer[sibling_index], direction));
             }
 
-            current_index /= 2; // Move para o próximo nível
+            current_index /= 2;
         }
 
         Some(MerkleInclusionPath { value, path })
     }
+}
+
+fn hash_leaf<T: AsRef<[u8]>>(item: &T) -> HashDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(item.as_ref());
+    hasher.finalize()
+}
+
+fn hash_node(left: &HashDigest, right: &HashDigest) -> HashDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(left);
+    hasher.update(right);
+    hasher.finalize()
 }
 
 pub enum MerkleInclusionPathError {
@@ -108,54 +108,24 @@ impl std::fmt::Debug for MerkleInclusionPathError {
     }
 }
 
-// impl<T> MerkleInclusionPath<T> {
-//     pub fn verify(&self) -> Result<(), MerkleInclusionPathError> {
-//         Ok(())
-//     }
-// }
-
 impl<T> MerkleInclusionPath<T>
 where
-    T: AsRef<[u8]> + Clone, // o clone é necessário para o valor da leaf;
+    T: AsRef<[u8]> + Clone,
 {
-    /// Verifica se o caminho de inclusão é válido, comparando o hash recalculado com a raiz
     pub fn verify(&self, root: &HashDigest) -> Result<(), MerkleInclusionPathError> {
-        // Recalcular o hash a partir do valor da folha.
         let mut computed_hash = {
             let mut hasher = Sha256::new();
             hasher.update(self.value.as_ref());
             hasher.finalize()
         };
 
-        // Validar o caminho da inclusão, recalculando o hash até chegar na raiz.
-        // for (sibling_hash, direction) in &self.path {
-        //     computed_hash = match direction {
-        //         Direction::Left => {
-        //             let mut hasher = Sha256::new();
-        //             hasher.update(sibling_hash);
-        //             hasher.update(&computed_hash);
-        //             hasher.finalize()
-        //         }
-        //         Direction::Right => {
-        //             let mut hasher = Sha256::new();
-        //             hasher.update(&computed_hash);
-        //             hasher.update(sibling_hash);
-        //             hasher.finalize()
-        //         }
-        //     };
-        // }
         for (sibling_hash, direction) in &self.path {
             computed_hash = match direction {
-                Direction::Left => Merkle::hash_node(sibling_hash, &computed_hash),
-                Direction::Right => Merkle::hash_node(&computed_hash, sibling_hash),
+                Direction::Left => hash_node(sibling_hash, &computed_hash),
+                Direction::Right => hash_node(&computed_hash, sibling_hash),
             };
         }
-        // let mut hasher = Sha256::new();
-        // hasher.update(left);
-        // hasher.update(right);
-        // computed_hash = hasher.finalize();
 
-        // Validar se o hash recalculado corresponde à raiz da árvore.
         if &computed_hash == root {
             Ok(())
         } else {
@@ -166,32 +136,15 @@ where
         }
     }
 }
+
 #[cfg(test)]
 #[test]
-fn test_commit() {
-    // main aparece como never used ainda
-    // Adicionei os dados como `Vec<Vec<u8>>`, pois `u8` precisa ser tratado como um slice.
+fn test_open_verify() {
     let data = vec![[0], [8], [4], [1], [5], [7], [6], [1]];
-
     let merkle_tree = Merkle::commit(data);
 
-    /*
-        // tinha escrito assim pq a quantidade de itens deve ser uma potência de 2.
-
-        let data = vec![0u8, 8, 4, 1, 5, 7, 6, 1];
-        let merkle_tree = Merkle::commit(data);
-
-        println!("Merkle Root: {:x?}", merkle_tree.root());
-
-        ver se notação da IA melhorou
-    */
-
     println!("Merkle Root:\n {:x?}", merkle_tree.root());
-
-    // Testando "open" com um índice válido
-    if let Some(proof) = merkle_tree.open(5) {
-        println!("Inclusion Path for index 5:\n {:x?}", proof);
-    } else {
-        println!("Invalid index!");
-    }
+    let proof = merkle_tree.open(5).unwrap();
+    println!("Inclusion Path for index 5:\n {:x?}", proof);
+    proof.verify(&merkle_tree.root()).unwrap();
 }
