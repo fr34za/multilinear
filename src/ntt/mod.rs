@@ -13,15 +13,22 @@ impl<F: Field> Polynomial<F> {
             .fold(F::from(0), |acc, &coeff| acc * x + coeff)
     }
 
-    pub fn ntt(&self, gen: F) -> LagrangePolynomial<F> {
+    pub fn ntt_naive(&self, gen: F) -> LagrangePolynomial<F> {
         assert!(self.coeffs.len().is_power_of_two());
-        let evals = [].to_vec(); // FIXME
+        let n = self.coeffs.len();
+        let mut evals = Vec::with_capacity(n);
+        let mut root = F::from(1); // Start with the first root of unity (gen^0)
+    
+        for _ in 0..n {
+            evals.push(self.evaluate(root));
+            root = root * gen; // Move to the next root of unity
+        }
+    
         LagrangePolynomial {
             gen,
             evals,
         }
     }
-}
 
 #[derive (Clone, Debug, PartialEq)]
 pub struct LagrangePolynomial<F> {
