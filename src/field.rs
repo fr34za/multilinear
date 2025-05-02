@@ -18,7 +18,7 @@ pub trait Field = Add<Output = Self>
     + Copy
     + Sum
     + Product
-    + From<u64>
+    + From<i64>
     + Eq;
 
 #[derive(MontConfig)]

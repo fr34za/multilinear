@@ -57,7 +57,7 @@ impl Mask {
     pub(crate) fn evaluate<F: Field>(&self, points: &[F]) -> F {
         let n_vars = self.n_vars;
         let index = self.index;
-        let one = F::from(1u64);
+        let one = F::from(1i64);
         let select = |i| {
             // Note: the points are read from last to first, since WHIR
             // is big endian and we want to follow the same convention

@@ -173,7 +173,7 @@ impl Transcript {
     }
 
     pub fn next_challenge<F: Field>(&mut self) -> F {
-        F::from(self.inner.random::<u64>())
+        F::from(self.inner.random::<i64>())
     }
 
     pub fn absorb(&mut self, _values: &[u8]) {}

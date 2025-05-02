@@ -54,7 +54,7 @@ impl<F: Field> System<F> {
             // partial sum polynomial. But the first point can be
             // derived from the second
             for i in 1..total_degree + 1 {
-                evals[i] = self.partial_sum(tables, F::from(i as u64));
+                evals[i] = self.partial_sum(tables, F::from(i as i64));
             }
             evals[0] = previous_sum - evals[1];
             let pol = PolynomialEvals {

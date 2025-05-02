@@ -16,7 +16,7 @@ impl<F: Field> Polynomial<F> {
     pub fn evaluate_over_domain(&self, n: usize) -> PolynomialEvals<F> {
         let evals = (0..n)
             .map(|i| {
-                let x = F::from(i as u64);
+                let x = F::from(i as i64);
                 self.evaluate(x)
             })
             .collect::<Vec<_>>()
@@ -55,7 +55,7 @@ impl<F: Field> PolynomialEvals<F> {
             // Compute the j-th Lagrange basis polynomial L_j(x)
             let mut lj = [F::from(1)].to_vec(); // start with the constant 1
 
-            let xj = F::from(j as u64);
+            let xj = F::from(j as i64);
             let mut denom = F::from(1);
 
             for (m, _) in self.evals.iter().enumerate() {
@@ -63,7 +63,7 @@ impl<F: Field> PolynomialEvals<F> {
                     continue;
                 }
 
-                let xm = F::from(m as u64);
+                let xm = F::from(m as i64);
 
                 // lj(x) *= (x - xm)
                 lj = poly_mul(&lj, &[-xm, F::from(1)]);
