@@ -1,9 +1,4 @@
 #![feature(trait_alias)]
-pub mod constraints;
-pub mod evaluation;
+pub mod constraint_system;
 pub mod field;
-pub mod merkle;
-pub mod polynomials;
-pub mod sumcheck;
-pub mod system;
-pub mod trace;
+pub mod merkle_tree;

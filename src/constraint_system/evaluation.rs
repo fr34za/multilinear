@@ -1,4 +1,5 @@
-use crate::{constraints::ConstraintSet, field::Field, system::System, trace::Trace};
+use super::{constraints::ConstraintSet, system::System, trace::Trace};
+use crate::field::Field;
 
 impl<F: Field> System<F> {
     pub fn evaluate_composition(&self, outputs: &[F]) -> F {

@@ -1,12 +1,12 @@
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use crate::{
+use super::{
     constraints::ConstraintSet,
     evaluation::Mask,
-    field::Field,
     trace::{Commitment, Trace},
 };
+use crate::field::Field;
 
 pub struct System<F> {
     constraints: ConstraintSet<F>,

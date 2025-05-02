@@ -1,9 +1,9 @@
-use crate::{
+use super::{
     evaluation::Mask,
-    field::Field,
     polynomials::{Polynomial, PolynomialEvals},
     system::{System, Transcript},
 };
+use crate::field::Field;
 
 pub struct Tables<F> {
     matrix: Box<[F]>,
@@ -194,12 +194,12 @@ impl<F: std::fmt::Debug> std::fmt::Debug for SumcheckPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
+    use crate::constraint_system::{
         constraints::{ConstraintSet, Expr},
-        field::Field128 as F,
         system::WitnessLayout,
         trace::Trace,
     };
+    use crate::field::Field128 as F;
     use std::time::Instant;
 
     fn pythagorean_trace<F: Field>() -> Trace<F> {
