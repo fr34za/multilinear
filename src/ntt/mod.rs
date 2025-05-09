@@ -7,60 +7,40 @@ pub struct Polynomial<F> {
 
 impl<F: Field> Polynomial<F> {
     pub fn evaluate(&self, x: F) -> F {
-        self.coeffs
-            .iter()
-            .rev()
-            .fold(F::from(0), |acc, &coeff| acc * x + coeff)
+        self.coeffs.iter().rev().fold(F::from(0), |acc, &coeff| acc * x + coeff)
     }
 
     pub fn ntt(&self, gen: F) -> LagrangePolynomial<F> {
         let n = self.coeffs.len();
         assert!(n.is_power_of_two(), "The number of coeffs must be a power of 2");
 
-        let evals = Self::recursive_ntt(&self.coeffs, gen, n);
+        let evals = Self::recursive_ntt(&self.coeffs, gen, 0, 1, n);
         LagrangePolynomial { gen, evals }
     }
 
-    fn recursive_ntt(coeffs: &[F], omega: F, n: usize) -> Vec<F> {
+    fn recursive_ntt(
+        coeffs: &[F], omega: F, offset: usize, jump: usize, n: usize
+    ) -> Vec<F> {
         if n == 1 {
-            return vec![coeffs[0]];
+            return vec![coeffs[offset]];
         }
 
         let half_n = n / 2;
         let omega_squared = omega * omega;
 
-        let (even_coeffs, odd_coeffs): (Vec<F>, Vec<F>) = coeffs
-            .iter()
-            .enumerate()
-            .fold(
-                (Vec::with_capacity(half_n), Vec::with_capacity(half_n)),
-                |(mut evens, mut odds), (i, &val)| {
-                    if i % 2 == 0 {
-                        evens.push(val);
-                    } else {
-                        odds.push(val);
-                    }
-                    (evens, odds)
-                },
-            );
+        let even_evals = Self::recursive_ntt(coeffs, omega_squared, offset, jump * 2, half_n);
+        let odd_evals  = Self::recursive_ntt(coeffs, omega_squared, offset + jump, jump * 2, half_n);
 
-        let (even_evals, odd_evals) = (
-            Self::recursive_ntt(&even_coeffs, omega_squared, half_n),
-            Self::recursive_ntt(&odd_coeffs, omega_squared, half_n),
-        );
+        let mut omega_pow = F::from(1);
+        let mut out = Vec::with_capacity(n);
 
-        let omega_powers: Vec<F> =
-            std::iter::successors(Some(F::from(1)), |&prev| Some(prev * omega))
-                .take(half_n)
-                .collect();
-
-        (0..half_n)
-            .flat_map(|i| {
-                let even = even_evals[i];
-                let odd_term = omega_powers[i] * odd_evals[i];
-                vec![even + odd_term, even - odd_term]
-            })
-            .collect()
+        for i in 0..half_n {
+            let temp = omega_pow * odd_evals[i];
+            out.push(even_evals[i] + temp);
+            out.push(even_evals[i] - temp);
+            omega_pow *= omega;
+        }
+        out
     }
 }
 
@@ -129,8 +109,8 @@ impl<F: Field> LagrangePolynomial<F> {
 
 #[test]
 fn ntt_test() {
-    use ark_ff::Field;
     use crate::field::Field128 as F;
+    use ark_ff::Field;
     const MODULUS: u128 = 340282366920938463463374557953744961537;
     let f = F::from;
     let coeffs = [1, 3, 4, 2, 8, 7, 6, 1].into_iter().map(f).collect();
