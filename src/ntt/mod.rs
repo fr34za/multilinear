@@ -17,7 +17,7 @@ impl<F: Field> Polynomial<F> {
         assert!(self.coeffs.len().is_power_of_two());
         let n = self.coeffs.len();
         let mut evals = Vec::with_capacity(n);
-        let mut root = F::from(1); // Start with the first root of unity (gen^0)
+        let mut root = F::from(1); 
 
         for _ in 0..n {
             evals.push(self.evaluate(root));
@@ -40,6 +40,52 @@ impl<F: Field> Polynomial<F> {
         let evals = recursive_ntt(&self.coeffs, gen, 0, 1, n);
         LagrangePolynomial { gen, evals }
     }
+
+    pub fn ntt_iterative(&self, gen: F) -> LagrangePolynomial<F> {
+        let n = self.coeffs.len();
+        assert!(
+            n.is_power_of_two(),
+            "The number of coeffs must be a power of 2"
+        );
+        
+        let mut values = self.coeffs.clone();
+        
+        bit_reverse_permutation(&mut values);
+        
+        let mut len = 2;
+        while len <= n {
+            let mut wlen = gen;
+            for _ in 0..(n/len).trailing_zeros() {
+                wlen = wlen * wlen;
+            }
+            
+            for i in (0..n).step_by(len) {
+                let mut w = F::from(1);
+                for j in 0..len/2 {
+                    let u = values[i + j];
+                    let v = values[i + j + len/2] * w;
+                    values[i + j] = u + v;
+                    values[i + j + len/2] = u - v;
+                    w = w * wlen;
+                }
+            }
+            len *= 2;
+        }
+        
+        LagrangePolynomial { gen, evals: values }
+    }
+}
+
+fn bit_reverse_permutation<F: Clone>(values: &mut [F]) {
+    let n = values.len();
+    let bits = n.trailing_zeros() as usize;
+    
+    for i in 0..n {
+        let j = i.reverse_bits() >> (usize::BITS as usize - bits);
+        if i < j {
+            values.swap(i, j);
+        }
+    }
 }
 
 fn recursive_ntt<F: Field>(coeffs: &[F], omega: F, offset: usize, jump: usize, n: usize) -> Vec<F> {
@@ -56,8 +102,10 @@ fn recursive_ntt<F: Field>(coeffs: &[F], omega: F, offset: usize, jump: usize, n
     let mut omega_pow = F::from(1);
     let mut out = Vec::with_capacity(n);
 
-    for i in 0..n {
-        out.push(even_evals[i % half_n] + omega_pow * odd_evals[i % half_n]);
+    for i in 0..half_n {
+        let temp = omega_pow * odd_evals[i];
+        out.push(even_evals[i] + temp);
+        out.push(even_evals[i] - temp);
         omega_pow *= omega;
     }
     out
@@ -85,6 +133,44 @@ impl<F: Field> LagrangePolynomial<F> {
             coeffs: scaled_coeffs,
         }
     }
+
+    pub fn intt_iterative(&self) -> Polynomial<F> {
+        let n = self.evals.len();
+        assert!(n.is_power_of_two());
+        
+        let mut values = self.evals.clone();
+        
+        bit_reverse_permutation(&mut values);
+        
+        let gen_inv = F::from(1) / self.gen;
+        let mut len = 2;
+        while len <= n {
+            let mut wlen = gen_inv;
+            for _ in 0..(n/len).trailing_zeros() {
+                wlen = wlen * wlen;
+            }
+            
+            for i in (0..n).step_by(len) {
+                let mut w = F::from(1);
+                for j in 0..len/2 {
+                    let u = values[i + j];
+                    let v = values[i + j + len/2] * w;
+                    values[i + j] = u + v;
+                    values[i + j + len/2] = u - v;
+                    w = w * wlen;
+                }
+            }
+            len *= 2;
+        }
+        
+        // 3. Escala por 1/n
+        let n_inv = F::from(1) / F::from(n as i64);
+        for val in &mut values {
+            *val = *val * n_inv;
+        }
+        
+        Polynomial { coeffs: values }
+    }
 }
 
 #[cfg(test)]
@@ -106,7 +192,7 @@ mod tests {
     #[test]
     fn ntt_benchmark_test() {
         let log_n = 20;
-        let coeffs = (0..1 << log_n).map(F::from).collect();
+        let coeffs = (0..1 << log_n).map(|i| F::from(i as i64)).collect();
         let pol = Polynomial::<F> { coeffs };
         let gen = generator(pol.coeffs.len());
         let now = std::time::Instant::now();
@@ -117,7 +203,7 @@ mod tests {
     #[test]
     fn ntt_test() {
         let log_n = 4;
-        let coeffs = (0..1 << log_n).map(F::from).collect();
+        let coeffs = (0..1 << log_n).map(|i| F::from(i as i64)).collect();
         let pol = Polynomial::<F> { coeffs };
         let gen = generator(pol.coeffs.len());
         let now = std::time::Instant::now();
@@ -132,7 +218,7 @@ mod tests {
     #[test]
     fn intt_test() {
         let log_n = 4;
-        let coeffs = (0..1 << log_n).map(F::from).collect();
+        let coeffs = (0..1 << log_n).map(|i| F::from(i as i64)).collect();
         let pol = Polynomial::<F> { coeffs };
         let gen = generator(pol.coeffs.len());
         let now = std::time::Instant::now();
@@ -141,6 +227,54 @@ mod tests {
         let now = std::time::Instant::now();
         let intt = ntt.intt();
         println!("INTT elapsed {:?}", now.elapsed());
+        assert_eq!(pol, intt);
+    }
+    
+    // Comparing 3 imp
+    #[test]
+    fn ntt_benchmark_comparison() {
+        let sizes = [10, 12, 14, 16, 18, 20];
+        
+        for &log_n in &sizes {
+            let n = 1 << log_n;
+            println!("\nTesting size 2^{} = {}", log_n, n);
+            
+            let coeffs = (0..n).map(|i| F::from(i as i64)).collect();
+            let pol = Polynomial::<F> { coeffs };
+            let gen = generator(n);
+            
+            // Benchmark NTT recursiva
+            let now = std::time::Instant::now();
+            black_box(pol.ntt(gen.clone()));
+            println!("Recursive NTT: {:?}", now.elapsed());
+            
+            // Benchmark NTT iterativa in-place
+            let now = std::time::Instant::now();
+            black_box(pol.ntt_iterative(gen.clone()));
+            println!("Iterative NTT: {:?}", now.elapsed());
+            
+            // Benchmark NTT naive 
+            if log_n <= 12 {
+                let now = std::time::Instant::now();
+                black_box(pol.ntt_naive(gen));
+                println!("Naive NTT: {:?}", now.elapsed());
+            } else {
+                println!("Naive NTT: skipped (too slow for large inputs)");
+            }
+        }
+    }
+    
+    // complete cicle test
+    #[test]
+    fn ntt_intt_iterative_cycle() {
+        let log_n = 10;
+        let coeffs = (0..1 << log_n).map(|i| F::from(i as i64)).collect();
+        let pol = Polynomial::<F> { coeffs };
+        let gen = generator(pol.coeffs.len());
+        
+        let ntt = pol.ntt_iterative(gen);
+        let intt = ntt.intt_iterative();
+        
         assert_eq!(pol, intt);
     }
 }
