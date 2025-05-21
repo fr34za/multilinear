@@ -102,7 +102,7 @@ impl std::fmt::Debug for MerkleInclusionPathError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MerkleInclusionPathError::IncompatibleHash(hash1, hash2) => {
-                write!(f, "{:x?} != {:x?}", hash1, hash2)
+                write!(f, "{hash1:x?} != {hash2:x?}")
             }
         }
     }
@@ -145,6 +145,6 @@ fn test_open_verify() {
 
     println!("Merkle Root:\n {:x?}", merkle_tree.root());
     let proof = merkle_tree.open(5).unwrap();
-    println!("Inclusion Path for index 5:\n {:x?}", proof);
+    println!("Inclusion Path for index 5:\n {proof:x?}");
     proof.verify(&merkle_tree.root()).unwrap();
 }

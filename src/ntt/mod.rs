@@ -177,7 +177,6 @@ mod tests {
 
     use super::*;
     use crate::field::Field128 as F;
-    use ark_ff::Field;
     const MODULUS: u128 = 340282366920938463463374557953744961537;
 
     fn generator(len: usize) -> F {
@@ -235,7 +234,7 @@ mod tests {
 
         for &log_n in &sizes {
             let n = 1 << log_n;
-            println!("\nTesting size 2^{} = {}", log_n, n);
+            println!("\nTesting size 2^{log_n} = {n}");
 
             let coeffs = (0..n).map(|i| F::from(i as i64)).collect();
             let pol = Polynomial::<F> { coeffs };

@@ -1,3 +1,6 @@
+use std::marker::PhantomData;
+
+use crate::field::Field128;
 use crate::merkle_tree::{Merkle, MerkleInclusionPath};
 use crate::ntt::Polynomial;
 use crate::{field::Field, merkle_tree::HashDigest};
@@ -6,6 +9,12 @@ use sha2::{Digest, Sha256};
 
 pub struct Transcript {
     state: Sha256,
+}
+
+impl Default for Transcript {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Transcript {
@@ -32,6 +41,19 @@ impl Transcript {
 pub trait HashableField: Field + AsRef<[u8]> {
     fn to_bytes(&self) -> &[u8];
     fn from_digest(digest: &[u8; 32]) -> Self;
+}
+
+impl HashableField for Field128 {
+    fn to_bytes(&self) -> &[u8] {
+        self.as_ref()
+    }
+
+    fn from_digest(digest: &[u8; 32]) -> Self {
+        let mut arr = [0u64; 2];
+        arr[0] = u64::from_le_bytes(digest[0..8].try_into().unwrap());
+        arr[1] = u64::from_le_bytes(digest[8..16].try_into().unwrap());
+        Field128(ark_ff::Fp(ark_ff::BigInt(arr), PhantomData))
+    }
 }
 
 pub struct ProverData<F> {
@@ -148,7 +170,7 @@ impl<F: HashableField> ProverData<F> {
         Some(())
     }
 
-    pub fn fold(gen: F, values: &mut Vec<F>, transcript: &mut Transcript) -> Self {
+    pub fn fold(gen: F, values: Vec<F>, transcript: &mut Transcript) -> Self {
         let mut prover_data = Self::init(values, gen, transcript);
         while prover_data.fold_step_opt(gen, transcript).is_some() {}
         prover_data
@@ -171,10 +193,6 @@ impl<F: HashableField> ProverData<F> {
         let mut current_conjugate = conjugate_index;
 
         for merkle in &self.commitments {
-            if current_index >= merkle.data.len() || current_conjugate >= merkle.data.len() {
-                break;
-            }
-
             let path = merkle.open(current_index).expect("Index out of bounds");
             let conjugate_path = merkle
                 .open(current_conjugate)
@@ -188,27 +206,6 @@ impl<F: HashableField> ProverData<F> {
 
         QueryProof { index, paths }
     }
-
-    // // take the merkle at layer `layer`
-    // let merkle = &self.commitments[layer];
-    // let data_len = merkle.data.len();
-    // let half = data_len / 2;
-    // // open value at `index` and `index + half` where `half` is the length of the data over 2
-    // let value_path = merkle.open(index).expect("Index out of bounds");
-    // let minus_index = (index + half) % data_len;
-    // let minus_value_path = merkle.open(minus_index).expect("Index out of bounds");
-    // // take the next merkle (layer `layer + 1`)
-    // let next_merkle = &self.commitments[layer + 1];
-    // // open value at `index`
-    // let next_index = index % (data_len / 2);
-    // let next_value_path = next_merkle.open(next_index).expect("Index out of bounds");
-    // QueryProof {
-    //     index,
-    //     layer,
-    //     value: value_path,
-    //     minus_value: minus_value_path,
-    //     next_value: next_value_path,
-    //
 }
 
 pub struct QueryProof<F> {
@@ -225,17 +222,9 @@ pub struct FriProof<F> {
     pub last_elem: F,
 }
 
-// #[test]
-// fn fold_step_test() {
-//     // check that `fold_step` and `fold_step_opt` are the
-//     // same for some "random" vector (of size power of 2)
-//     todo!()
-// }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::Field128;
 
     #[test]
     fn fold_step_test() {

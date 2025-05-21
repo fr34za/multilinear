@@ -30,11 +30,11 @@ impl<F: std::fmt::Debug> std::fmt::Debug for Polynomial<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (i, coeff) in self.coeffs.iter().enumerate() {
             if i == 0 {
-                write!(f, "{:?}", coeff)?;
+                write!(f, "{coeff:?}")?;
             } else if i == 1 {
-                write!(f, " + {:?}*X", coeff)?;
+                write!(f, " + {coeff:?}*X")?;
             } else {
-                write!(f, " + {:?}*X^{i}", coeff)?;
+                write!(f, " + {coeff:?}*X^{i}")?;
             }
         }
         Ok(())
