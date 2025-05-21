@@ -84,14 +84,10 @@ impl<F: HashableField> ProverData<F> {
             return None;
         }
 
-        // generate random field element called `r` from the transcript using `random` and `from_digest`.
+        // generate random field element called `r` from the transcript using `random` and `from_digest`
         let random_bytes = transcript.random();
         let r = F::from_digest(&random_bytes);
-        // Then do the fold step as described by
-        // https://aszepieniec.github.io/stark-anatomy/fri.html#split-and-fold
-        // watch at 9:25 https://www.youtube.com/watch?v=gd1NbKUOJwA
-        // do not worry about queries now!
-        // in the last polynomial of the `polynomials` field
+
         let mut next_poly = Vec::with_capacity(n / 2);
 
         for i in 0..(n / 2) {
@@ -152,60 +148,119 @@ impl<F: HashableField> ProverData<F> {
         Some(())
     }
 
-    pub fn fold(gen: F, transcript: &mut Transcript) -> Self {
-        // create an init `ProverData`
-        // do `fold_step` until it stops doing anything
-        // then return the `ProverData`
-        //todo!()
-        let initial_values = vec![F::from(0)];
-        let mut prover_data = Self::init(initial_values, gen, transcript);
-        while prover_data.fold_step(gen, transcript).is_some() {}
-
+    pub fn fold(gen: F, values: &mut Vec<F>, transcript: &mut Transcript) -> Self {
+        let mut prover_data = Self::init(values, gen, transcript);
+        while prover_data.fold_step_opt(gen, transcript).is_some() {}
         prover_data
     }
 
     pub fn fold_roots(&self) -> Vec<HashDigest> {
-        // return the roots of all layers
-        //todo!()
         self.commitments
             .iter()
             .map(|merkle| merkle.root())
             .collect()
     }
 
-    pub fn open_query_at(&self, index: usize, layer: usize) -> QueryProof<F> {
-        // take the merkle at layer `layer`
-        let merkle = &self.commitments[layer];
-        let data_len = merkle.data.len();
-        let half = data_len / 2;
-        // open value at `index` and `index + half` where `half` is the length of the data over 2
-        let value_path = merkle.open(index).expect("Index out of bounds");
-        let minus_index = (index + half) % data_len;
-        let minus_value_path = merkle.open(minus_index).expect("Index out of bounds");
-        // take the next merkle (layer `layer + 1`)
-        let next_merkle = &self.commitments[layer + 1];
-        // open value at `index`
-        let next_index = index % (data_len / 2);
-        let next_value_path = next_merkle.open(next_index).expect("Index out of bounds");
-        todo!()
+    pub fn open_query_at(&self, index: usize) -> QueryProof<F> {
+        let n = self.commitments[0].data.len();
+        assert!(index < n / 2);
+        let conjugate_index = index + n / 2;
+
+        let mut paths = Vec::new();
+        let mut current_index = index;
+        let mut current_conjugate = conjugate_index;
+
+        for merkle in &self.commitments {
+            if current_index >= merkle.data.len() || current_conjugate >= merkle.data.len() {
+                break;
+            }
+
+            let path = merkle.open(current_index).expect("Index out of bounds");
+            let conjugate_path = merkle
+                .open(current_conjugate)
+                .expect("Conjugate index out of bounds");
+
+            paths.push((path, conjugate_path));
+
+            current_index /= 2;
+            current_conjugate /= 2;
+        }
+
+        QueryProof { index, paths }
     }
+
+    // // take the merkle at layer `layer`
+    // let merkle = &self.commitments[layer];
+    // let data_len = merkle.data.len();
+    // let half = data_len / 2;
+    // // open value at `index` and `index + half` where `half` is the length of the data over 2
+    // let value_path = merkle.open(index).expect("Index out of bounds");
+    // let minus_index = (index + half) % data_len;
+    // let minus_value_path = merkle.open(minus_index).expect("Index out of bounds");
+    // // take the next merkle (layer `layer + 1`)
+    // let next_merkle = &self.commitments[layer + 1];
+    // // open value at `index`
+    // let next_index = index % (data_len / 2);
+    // let next_value_path = next_merkle.open(next_index).expect("Index out of bounds");
+    // QueryProof {
+    //     index,
+    //     layer,
+    //     value: value_path,
+    //     minus_value: minus_value_path,
+    //     next_value: next_value_path,
+    //
 }
 
 pub struct QueryProof<F> {
+    // initial random index, from 0..N/2
     pub index: usize,
-    pub layer: usize,
-    pub value: MerkleInclusionPath<F>,
-    pub minus_value: MerkleInclusionPath<F>,
-    pub next_value: MerkleInclusionPath<F>,
+    // merkle paths for all fold layers at both the index and index + N/2
+    // the index at subsequent layers are halved
+    pub paths: Vec<(MerkleInclusionPath<F>, MerkleInclusionPath<F>)>,
 }
 
-fn main() {
-    let mut transcript = Transcript::new();
+pub struct FriProof<F> {
+    pub commitments: Vec<HashDigest>,
+    pub queries: Vec<QueryProof<F>>,
+    pub last_elem: F,
+}
 
-    transcript.append_message(b"label1", b"mensagem1");
-    transcript.append_message(b"label2", b"mensagem2");
+// #[test]
+// fn fold_step_test() {
+//     // check that `fold_step` and `fold_step_opt` are the
+//     // same for some "random" vector (of size power of 2)
+//     todo!()
+// }
 
-    let random_value = transcript.random();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::field::Field128;
 
-    println!("Random digest: {:x?}", random_value);
+    #[test]
+    fn fold_step_test() {
+        let values: Vec<Field128> = (0..32).map(|i| Field128::from(i as i64 * 7 + 3)).collect();
+
+        let gen = Field128::from(7);
+
+        let mut transcript1 = Transcript::new();
+        let mut transcript2 = Transcript::new();
+
+        let mut prover1 = ProverData::init(values.clone(), gen, &mut transcript1);
+        let mut prover2 = ProverData::init(values.clone(), gen, &mut transcript2);
+
+        prover1.fold_step(gen, &mut transcript1);
+        prover2.fold_step_opt(gen, &mut transcript2);
+
+        assert_eq!(
+            prover1.commitments[1].root(),
+            prover2.commitments[1].root(),
+            "Merkle roots differ after folding"
+        );
+
+        assert_eq!(
+            prover1.commitments[1].data, prover2.commitments[1].data,
+            "Commitment data differs after folding"
+        );
+    }
 }
