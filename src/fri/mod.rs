@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use crate::field::Field128;
 use crate::merkle_tree::{Merkle, MerkleInclusionPath};
 use crate::ntt::Polynomial;
@@ -49,10 +47,8 @@ impl HashableField for Field128 {
     }
 
     fn from_digest(digest: &[u8; 32]) -> Self {
-        let mut arr = [0u64; 2];
-        arr[0] = u64::from_le_bytes(digest[0..8].try_into().unwrap());
-        arr[1] = u64::from_le_bytes(digest[8..16].try_into().unwrap());
-        Field128(ark_ff::Fp(ark_ff::BigInt(arr), PhantomData))
+        let x = u128::from_le_bytes(digest[0..16].try_into().unwrap());
+        Self::from(x)
     }
 }
 
@@ -121,7 +117,8 @@ impl<F: HashableField> ProverData<F> {
         self.polynomials.push(next_poly.clone());
 
         // Use `reed_solomon` to compute the values for commitment.
-        let rs_encoded = reed_solomon(next_poly, gen);
+        let next_gen = gen * gen;
+        let rs_encoded = reed_solomon(next_poly, next_gen);
 
         // `commit` to Merkle, etc
         let merkle = Merkle::commit(rs_encoded);
@@ -172,7 +169,10 @@ impl<F: HashableField> ProverData<F> {
 
     pub fn fold(gen: F, values: Vec<F>, transcript: &mut Transcript) -> Self {
         let mut prover_data = Self::init(values, gen, transcript);
-        while prover_data.fold_step_opt(gen, transcript).is_some() {}
+        let mut current_gen = gen;
+        while prover_data.fold_step_opt(current_gen, transcript).is_some() {
+            current_gen *= current_gen;
+        }
         prover_data
     }
 
@@ -224,13 +224,18 @@ pub struct FriProof<F> {
 
 #[cfg(test)]
 mod tests {
+    use crate::ntt::NttField;
+
     use super::*;
 
     #[test]
     fn fold_step_test() {
-        let values: Vec<Field128> = (0..32).map(|i| Field128::from(i as i64 * 7 + 3)).collect();
+        let log_n = 5;
+        let values: Vec<Field128> = (0..1 << log_n)
+            .map(|i| Field128::from(i as i64 * 7 + 3))
+            .collect();
 
-        let gen = Field128::from(7);
+        let gen = Field128::pow_2_generator(log_n + 1).unwrap();
 
         let mut transcript1 = Transcript::new();
         let mut transcript2 = Transcript::new();

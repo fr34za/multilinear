@@ -1,6 +1,4 @@
 use crate::field::{Field, Field128};
-use ark_ff;
-use std::marker::PhantomData;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Polynomial<F> {
@@ -8,7 +6,7 @@ pub struct Polynomial<F> {
 }
 
 pub trait NttField: Field {
-    fn modulus() -> Self;
+    fn modulus() -> u128;
 
     fn generator() -> Self;
 
@@ -16,12 +14,8 @@ pub trait NttField: Field {
 }
 
 impl NttField for Field128 {
-    fn modulus() -> Self {
-        const MODULUS_U128: u128 = 340282366920938463463374557953744961537;
-        let low = MODULUS_U128 as u64;
-        let high = (MODULUS_U128 >> 64) as u64;
-
-        Field128(ark_ff::Fp(ark_ff::BigInt([low, high]), PhantomData))
+    fn modulus() -> u128 {
+        340282366920938463463374557953744961537
     }
 
     fn generator() -> Self {
@@ -29,21 +23,20 @@ impl NttField for Field128 {
     }
 
     fn pow_2_generator(log_size: u64) -> Option<Self> {
-        const MODULUS_U128: u128 = 340282366920938463463374557953744961537;
-        let modulus_minus_1 = MODULUS_U128 - 1;
+        let modulus_minus_1 = Self::modulus() - 1;
         let max_log_size = modulus_minus_1.trailing_zeros();
 
         if log_size > max_log_size as u64 {
             return None;
         }
 
-        let size = 1u128 << log_size; //let size = 1 << log_size;
-        let exp = (modulus_minus_1 / size);
+        let size = 1u128 << log_size;
+        let exp = modulus_minus_1 / size;
 
         let exp_low = exp as u64;
         let exp_high = (exp >> 64) as u64;
 
-        Some(Field128::from(3).pow([exp_low, exp_high]))
+        Some(Self::generator().pow([exp_low, exp_high]))
     }
 }
 
@@ -219,20 +212,14 @@ mod tests {
 
     use super::*;
     use crate::field::Field128 as F;
-    // Assumindo que MODULUS está definido e acessível aqui, e que Field128 implementa NttField
-
-    // A função local 'generator' foi removida, pois agora usamos Field128::pow_2_generator
 
     #[test]
     fn ntt_benchmark_test() {
-        // log_n original era 20, ajustado para um valor válido <= 6
-        let log_n = 6; // Exemplo: ajustado para 2^6 = 64
+        let log_n = 10;
         let n = 1 << log_n;
-        let coeffs = (0..n).map(|i| F::from(i as i64)).collect();
+        let coeffs = (0..n).map(F::from).collect();
         let pol = Polynomial::<F> { coeffs };
-        // Usar o método do trait
-        let gen = F::pow_2_generator(log_n as u64)
-            .expect(&format!("Gerador não encontrado para tamanho 2^{}", log_n));
+        let gen = F::pow_2_generator(log_n).unwrap();
         let now = std::time::Instant::now();
         black_box(pol.ntt(gen));
         println!("NTT elapsed {:?}", now.elapsed());
@@ -240,32 +227,27 @@ mod tests {
 
     #[test]
     fn ntt_test() {
-        let log_n = 4; // log_n original era 4, que é válido
+        let log_n = 4;
         let n = 1 << log_n;
         let coeffs = (0..n).map(|i| F::from(i as i64)).collect();
         let pol = Polynomial::<F> { coeffs };
-        // Usar o método do trait
-        let gen = F::pow_2_generator(log_n as u64)
-            .expect(&format!("Gerador não encontrado para tamanho 2^{}", log_n));
+        let gen = F::pow_2_generator(log_n as u64).unwrap();
         let now = std::time::Instant::now();
         let ntt = pol.ntt(gen);
         println!("NTT elapsed {:?}", now.elapsed());
-        // O teste naive também precisa do gerador
         let now = std::time::Instant::now();
-        let ntt_naive = pol.ntt_naive(gen); // Usar o mesmo 'gen'
+        let ntt_naive = pol.ntt_naive(gen);
         println!("NTT naive elapsed {:?}", now.elapsed());
         assert_eq!(ntt, ntt_naive);
     }
 
     #[test]
     fn intt_test() {
-        let log_n = 4; // log_n original era 4, que é válido
+        let log_n = 4;
         let n = 1 << log_n;
         let coeffs = (0..n).map(|i| F::from(i as i64)).collect();
         let pol = Polynomial::<F> { coeffs };
-        // Usar o método do trait
-        let gen = F::pow_2_generator(log_n as u64)
-            .expect(&format!("Gerador não encontrado para tamanho 2^{}", log_n));
+        let gen = F::pow_2_generator(log_n as u64).unwrap();
         let now = std::time::Instant::now();
         let ntt = pol.ntt(gen);
         println!("NTT elapsed {:?}", now.elapsed());
@@ -275,7 +257,6 @@ mod tests {
         assert_eq!(pol, intt);
     }
 
-    // Comparando 3 implementações
     #[test]
     fn ntt_benchmark_comparison() {
         let sizes = [4, 5, 6];
@@ -286,8 +267,7 @@ mod tests {
 
             let coeffs = (0..n).map(|i| F::from(i as i64)).collect();
             let pol = Polynomial::<F> { coeffs };
-            let gen = F::pow_2_generator(log_n as u64)
-                .expect(&format!("Gerador não encontrado para tamanho 2^{}", log_n));
+            let gen = F::pow_2_generator(log_n as u64).unwrap();
 
             let now = std::time::Instant::now();
             black_box(pol.ntt(gen));
@@ -298,8 +278,7 @@ mod tests {
             println!("Iterative NTT: {:?}", now.elapsed());
 
             if log_n <= 12 {
-                let gen_naive = F::pow_2_generator(log_n as u64)
-                    .expect(&format!("Gerador não encontrado para tamanho 2^{}", log_n));
+                let gen_naive = F::pow_2_generator(log_n as u64).unwrap();
                 let now = std::time::Instant::now();
                 black_box(pol.ntt_naive(gen_naive));
                 println!("Naive NTT: {:?}", now.elapsed());
@@ -311,13 +290,11 @@ mod tests {
 
     #[test]
     fn ntt_intt_iterative_cycle() {
-        let log_n = 6; // 2^6 = 64
+        let log_n = 10;
         let n = 1 << log_n;
         let coeffs = (0..n).map(|i| F::from(i as i64)).collect();
         let pol = Polynomial::<F> { coeffs };
-        let gen = F::pow_2_generator(log_n as u64)
-            .expect(&format!("Gerador não encontrado para tamanho 2^{}", log_n));
-
+        let gen = F::pow_2_generator(log_n as u64).unwrap();
         let ntt = pol.ntt_iterative(gen);
         let intt = ntt.intt_iterative();
 

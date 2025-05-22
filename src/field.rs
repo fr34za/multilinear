@@ -117,6 +117,18 @@ impl Product for Field128 {
     }
 }
 
+impl From<u128> for Field128 {
+    fn from(val: u128) -> Self {
+        Field128(Fp128::from(val))
+    }
+}
+
+impl From<i32> for Field128 {
+    fn from(val: i32) -> Self {
+        Field128(Fp128::from(val))
+    }
+}
+
 impl From<i64> for Field128 {
     fn from(val: i64) -> Self {
         Field128(Fp128::from(val))
