@@ -1,8 +1,50 @@
-use crate::field::Field;
+use crate::field::{Field, Field128};
+use ark_ff;
+use std::marker::PhantomData;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Polynomial<F> {
     pub coeffs: Vec<F>,
+}
+
+pub trait NttField: Field {
+    fn modulus() -> Self;
+
+    fn generator() -> Self;
+
+    fn pow_2_generator(log_size: u64) -> Option<Self>;
+}
+
+impl NttField for Field128 {
+    fn modulus() -> Self {
+        const MODULUS_U128: u128 = 340282366920938463463374557953744961537;
+        let low = MODULUS_U128 as u64;
+        let high = (MODULUS_U128 >> 64) as u64;
+
+        Field128(ark_ff::Fp(ark_ff::BigInt([low, high]), PhantomData))
+    }
+
+    fn generator() -> Self {
+        Field128::from(3)
+    }
+
+    fn pow_2_generator(log_size: u64) -> Option<Self> {
+        const MODULUS_U128: u128 = 340282366920938463463374557953744961537;
+        let modulus_minus_1 = MODULUS_U128 - 1;
+        let max_log_size = modulus_minus_1.trailing_zeros();
+
+        if log_size > max_log_size as u64 {
+            return None;
+        }
+
+        let size = 1u128 << log_size; //let size = 1 << log_size;
+        let exp = (modulus_minus_1 / size);
+
+        let exp_low = exp as u64;
+        let exp_high = (exp >> 64) as u64;
+
+        Some(Field128::from(3).pow([exp_low, exp_high]))
+    }
 }
 
 impl<F: Field> Polynomial<F> {
