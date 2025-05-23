@@ -1,6 +1,6 @@
 use crate::field::Field128;
 use crate::merkle_tree::{Merkle, MerkleInclusionPath};
-use crate::ntt::Polynomial;
+use crate::ntt::{NttField, Polynomial};
 use crate::{field::Field, merkle_tree::HashDigest};
 
 use sha2::{Digest, Sha256};
@@ -55,9 +55,11 @@ impl HashableField for Field128 {
 pub struct ProverData<F> {
     pub commitments: Vec<Merkle<F>>,
     pub polynomials: Vec<Vec<F>>,
+    pub last_element: Option<F>,
 }
 
-const LOG_BLOWUP: usize = 1;
+pub const LOG_BLOWUP: usize = 1;
+pub const NUM_QUERIES: usize = 128;
 
 pub fn reed_solomon<F: Field>(mut coeffs: Vec<F>, gen: F) -> Vec<F> {
     // first, multiply the size of `coeffs` by a factor of `blowup` through adding zeros
@@ -92,27 +94,40 @@ impl<F: HashableField> ProverData<F> {
         Self {
             commitments,
             polynomials,
+            last_element: None,
         }
     }
 
-    pub fn fold_step(&mut self, gen: F, transcript: &mut Transcript) -> Option<()> {
+    pub fn fold_step(&mut self, gen: F, transcript: &mut Transcript) {
         let last_poly = self.polynomials.last().unwrap().clone();
         let n = last_poly.len();
         if n <= 1 {
-            return None;
+            return;
         }
 
         // generate random field element called `r` from the transcript using `random` and `from_digest`
         let random_bytes = transcript.random();
         let r = F::from_digest(&random_bytes);
 
-        let mut next_poly = Vec::with_capacity(n / 2);
+        let half_n = n >> 1;
+        let mut next_poly = Vec::with_capacity(half_n);
 
-        for i in 0..(n / 2) {
+        for i in 0..(half_n) {
             let even = last_poly[i * 2];
             let odd = last_poly[i * 2 + 1];
 
             next_poly.push(even + r * odd);
+        }
+        if half_n == 1 {
+            // sanity check: last polynomial must be constant
+            let first = next_poly[0];
+            assert!(
+                next_poly.iter().all(|next| first == *next),
+                "not an RS code"
+            );
+            self.last_element = Some(first);
+            transcript.append_message(b"last_element", first.as_ref());
+            return;
         }
         self.polynomials.push(next_poly.clone());
 
@@ -127,17 +142,16 @@ impl<F: HashableField> ProverData<F> {
 
         // Use the `root()` to update the transcript
         transcript.append_message(b"merkle_root", root.as_slice());
-        Some(())
     }
 
-    pub fn fold_step_opt(&mut self, gen: F, transcript: &mut Transcript) -> Option<()> {
+    pub fn fold_step_opt(&mut self, gen: F, transcript: &mut Transcript) {
         // do not use polynomials. instead work solely on lagrange basis reading
         // the merkle `value` field
         let last_data = self.commitments.last().unwrap().data.clone();
         let n = last_data.len();
         let blowup = 1 << LOG_BLOWUP;
         if n <= blowup {
-            return None;
+            return;
         }
         let random_bytes = transcript.random();
         let r = F::from_digest(&random_bytes);
@@ -157,6 +171,18 @@ impl<F: HashableField> ProverData<F> {
             next_data.push(even + r * odd);
             gen_pow *= gen;
         }
+
+        if half_n == blowup {
+            // sanity check: last RS code must be constant
+            let first = next_data[0];
+            assert!(
+                next_data.iter().all(|next| first == *next),
+                "not an RS code"
+            );
+            self.last_element = Some(first);
+            transcript.append_message(b"last_element", first.as_ref());
+            return;
+        }
         // `commit` to Merkle, etc
         let merkle = Merkle::commit(next_data);
         let root = merkle.root();
@@ -164,13 +190,13 @@ impl<F: HashableField> ProverData<F> {
 
         // Use the `root()` to update the transcript
         transcript.append_message(b"merkle_root", root.as_slice());
-        Some(())
     }
 
     pub fn fold(gen: F, values: Vec<F>, transcript: &mut Transcript) -> Self {
         let mut prover_data = Self::init(values, gen, transcript);
         let mut current_gen = gen;
-        while prover_data.fold_step_opt(current_gen, transcript).is_some() {
+        while prover_data.last_element.is_none() {
+            prover_data.fold_step_opt(current_gen, transcript);
             current_gen *= current_gen;
         }
         prover_data
@@ -217,9 +243,47 @@ pub struct QueryProof<F> {
 }
 
 pub struct FriProof<F> {
+    // there are N commitments, where N is the log2 of the message size (the polynomial)
     pub commitments: Vec<HashDigest>,
+    // there are `NUM_QUERIES` number of query proofs
     pub queries: Vec<QueryProof<F>>,
+    // this is the last message, a single element
     pub last_elem: F,
+}
+
+impl<F: HashableField + NttField> FriProof<F> {
+    pub fn prove(message: Vec<F>, transcript: &mut Transcript) -> FriProof<F> {
+        // get the generator for length = blowup * message.len
+        let n = message.len();
+        let blowup = 1 << LOG_BLOWUP;
+        let domain_size = blowup * n;
+        let log_size = domain_size.trailing_zeros();
+        let gen = F::pow_2_generator(log_size as u64).unwrap();
+
+        // call `fold`
+        let prover_data = ProverData::fold(gen, message, transcript);
+        // define `mut n = blowup * message.len()`
+        let mut n = domain_size;
+        // for `0..NUM_QUERIES` generate random index between `0..n/2`
+        let mut queries = Vec::with_capacity(NUM_QUERIES);
+        for _ in 0..NUM_QUERIES {
+            let random_bytes = transcript.random();
+            let random_index = (u64::from_le_bytes(random_bytes[..8].try_into().unwrap())
+                % (n / 2) as u64) as usize;
+            // open query at this index and add the proof to a vector of query proofs
+            let query_proof = prover_data.open_query_at(random_index);
+            queries.push(query_proof);
+            // use the `index` to update the transcript
+            transcript.append_message(b"query_index", &random_index.to_le_bytes());
+            n /= 2;
+        }
+        // at the end create the FriProof using the queries, last_elem and the
+        FriProof {
+            commitments: prover_data.fold_roots(),
+            queries,
+            last_elem: prover_data.last_element.unwrap(),
+        }
+    }
 }
 
 #[cfg(test)]
