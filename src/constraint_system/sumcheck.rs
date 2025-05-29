@@ -1,3 +1,5 @@
+#![allow(clippy::needless_range_loop)]
+
 use super::{
     evaluation::Mask,
     polynomials::{Polynomial, PolynomialEvals},
@@ -8,7 +10,7 @@ use crate::{
     transcript::{HashableField, Transcript},
 };
 
-pub struct Tables<F> {
+pub struct SumcheckTables<F> {
     matrix: Box<[F]>,
     width: usize,
     height: usize,
@@ -20,7 +22,7 @@ pub struct SumcheckPolynomial<F> {
 }
 
 impl<F: HashableField> System<F> {
-    pub fn build_tables(&self) -> Tables<F> {
+    pub fn build_tables(&self) -> SumcheckTables<F> {
         let trace = self.trace().unwrap();
         let n_vars = trace.height().trailing_zeros() as usize;
         let row = self.challenges().row();
@@ -30,7 +32,7 @@ impl<F: HashableField> System<F> {
                 mask.evaluate(row)
             })
             .collect::<Vec<_>>();
-        Tables {
+        SumcheckTables {
             matrix: trace.matrix().into(),
             width: trace.width(),
             height: trace.height(),
@@ -38,73 +40,19 @@ impl<F: HashableField> System<F> {
         }
     }
 
-    #[allow(clippy::needless_range_loop)]
     pub fn compute_sumcheck_polynomials(
         &self,
         transcript: &mut Transcript,
-        tables: &mut Tables<F>,
+        tables: &mut SumcheckTables<F>,
         sum: F,
     ) -> Box<[SumcheckPolynomial<F>]> {
-        let mut pols = vec![];
-        let mut previous_sum = sum;
-        // degree of the composition polynomial plus 1 to account for
-        // the delta multilinear
-        let total_degree = self.constraints().degree() + 1;
-        let n_rounds = tables.height.trailing_zeros();
-        for _ in 0..n_rounds {
-            let mut evals = vec![F::from(0); total_degree + 1];
-            // you need `total_degree + 1` points to compute the
-            // partial sum polynomial. But the first point can be
-            // derived from the second
-            for i in 1..total_degree + 1 {
-                evals[i] = self.partial_sum(tables, F::from(i as i64));
-            }
-            evals[0] = previous_sum - evals[1];
-            let pol = PolynomialEvals {
-                evals: evals.into(),
-            }
-            .interpolate();
-            let sumcheck_pol = SumcheckPolynomial::new(&pol);
-            sumcheck_pol
-                .nonzero_coeffs
-                .iter()
-                .for_each(|coeff| transcript.absorb(coeff.as_ref()));
-            let r = transcript.next_challenge();
-            previous_sum = pol.evaluate(r);
-            pols.push(sumcheck_pol);
-            tables.fold(r);
-        }
-        pols.into()
-    }
-
-    pub fn partial_sum(&self, tables: &mut Tables<F>, r: F) -> F {
-        let offset = tables.height >> 1;
-        let one = F::from(1);
-        // small optimization
-        if r == one {
-            (0..offset)
-                .map(|i| {
-                    let d = r * tables.delta[i + offset];
-                    let m: Box<_> = (0..tables.width)
-                        .map(|j| r * tables.matrix_get(i + offset, j))
-                        .collect();
-                    let a = self.evaluate_composition(&m);
-                    a * d
-                })
-                .sum()
-        } else {
-            let s = one - r;
-            (0..offset)
-                .map(|i| {
-                    let d = s * tables.delta[i] + r * tables.delta[i + offset];
-                    let m: Box<_> = (0..tables.width)
-                        .map(|j| s * tables.matrix_get(i, j) + r * tables.matrix_get(i + offset, j))
-                        .collect();
-                    let a = self.evaluate_composition(&m);
-                    a * d
-                })
-                .sum()
-        }
+        let composition_degree = self.constraints().degree();
+        tables.compute_sumcheck_polynomials(
+            &|args| self.evaluate_composition(args),
+            composition_degree,
+            transcript,
+            sum,
+        )
     }
 
     pub fn verify_sumcheck_debug(
@@ -144,7 +92,91 @@ impl<F: HashableField> System<F> {
     }
 }
 
-impl<F: Field> Tables<F> {
+impl<F: HashableField> SumcheckTables<F> {
+    pub fn compute_sumcheck_polynomials(
+        &mut self,
+        composition: &impl Fn(&[F]) -> F,
+        composition_degree: usize,
+        transcript: &mut Transcript,
+        sum: F,
+    ) -> Box<[SumcheckPolynomial<F>]> {
+        let mut pols = vec![];
+        let mut previous_sum = sum;
+        // degree of the composition polynomial plus 1 to account for
+        // the delta multilinear
+        let total_degree = composition_degree + 1;
+        let n_rounds = self.height.trailing_zeros();
+        for _ in 0..n_rounds {
+            pols.push(self.compute_sumcheck_polynomial(
+                composition,
+                total_degree,
+                &mut previous_sum,
+                transcript,
+            ))
+        }
+        pols.into()
+    }
+
+    pub fn compute_sumcheck_polynomial(
+        &mut self,
+        composition: &impl Fn(&[F]) -> F,
+        total_degree: usize,
+        previous_sum: &mut F,
+        transcript: &mut Transcript,
+    ) -> SumcheckPolynomial<F> {
+        let mut evals = vec![F::from(0); total_degree + 1];
+        // you need `total_degree + 1` points to compute the
+        // partial sum polynomial. But the first point can be
+        // derived from the second
+        for i in 1..total_degree + 1 {
+            evals[i] = self.partial_sum(composition, F::from(i as i64));
+        }
+        evals[0] = *previous_sum - evals[1];
+        let pol = PolynomialEvals {
+            evals: evals.into(),
+        }
+        .interpolate();
+        let sumcheck_pol = SumcheckPolynomial::new(&pol);
+        sumcheck_pol
+            .nonzero_coeffs
+            .iter()
+            .for_each(|coeff| transcript.absorb(coeff.as_ref()));
+        let r = transcript.next_challenge();
+        *previous_sum = pol.evaluate(r);
+        self.fold(r);
+        sumcheck_pol
+    }
+
+    pub fn partial_sum(&self, composition: &impl Fn(&[F]) -> F, r: F) -> F {
+        let offset = self.height >> 1;
+        let one = F::from(1);
+        // small optimization
+        if r == one {
+            (0..offset)
+                .map(|i| {
+                    let d = r * self.delta[i + offset];
+                    let m: Box<_> = (0..self.width)
+                        .map(|j| r * self.matrix_get(i + offset, j))
+                        .collect();
+                    let a = composition(&m);
+                    a * d
+                })
+                .sum()
+        } else {
+            let s = one - r;
+            (0..offset)
+                .map(|i| {
+                    let d = s * self.delta[i] + r * self.delta[i + offset];
+                    let m: Box<_> = (0..self.width)
+                        .map(|j| s * self.matrix_get(i, j) + r * self.matrix_get(i + offset, j))
+                        .collect();
+                    let a = composition(&m);
+                    a * d
+                })
+                .sum()
+        }
+    }
+
     pub fn fold(&mut self, r: F) {
         self.height >>= 1;
         let offset = self.height;
