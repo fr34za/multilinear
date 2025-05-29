@@ -182,9 +182,9 @@ impl<F: std::fmt::Debug> std::fmt::Debug for SumcheckPolynomial<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (i, coeff) in self.nonzero_coeffs.iter().enumerate() {
             if i == 0 {
-                write!(f, "#### + {:?}*X", coeff)?;
+                write!(f, "#### + {coeff:?}*X")?;
             } else {
-                write!(f, " + {:?}*X^{}", coeff, i + 1)?;
+                write!(f, " + {coeff:?}*X^{}", i + 1)?;
             }
         }
         Ok(())
@@ -258,7 +258,7 @@ mod tests {
         let tables = &mut prover.build_tables();
         let sum = F::from(0);
         let pols = prover.compute_sumcheck_polynomials(transcript, tables, sum);
-        println!("{:#?}", pols);
+        println!("{pols:#?}");
         prover.verify_sumcheck_debug(verifier_transcript, &pols, sum);
     }
 

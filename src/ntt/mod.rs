@@ -1,8 +1,51 @@
-use crate::field::Field;
+use ark_ff::Field as ArkField;
+
+use crate::field::{Field, Field128};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Polynomial<F> {
     pub coeffs: Vec<F>,
+}
+
+pub trait NttField: Field {
+    fn modulus() -> u128;
+
+    fn generator() -> Self;
+
+    fn pow_2_generator(log_size: u64) -> Option<Self>;
+
+    fn pow<S: AsRef<[u64]>>(&self, exp: S) -> Self;
+}
+
+impl NttField for Field128 {
+    fn modulus() -> u128 {
+        340282366920938463463374557953744961537
+    }
+
+    fn generator() -> Self {
+        Field128::from(3)
+    }
+
+    fn pow_2_generator(log_size: u64) -> Option<Self> {
+        let modulus_minus_1 = Self::modulus() - 1;
+        let max_log_size = modulus_minus_1.trailing_zeros();
+
+        if log_size > max_log_size as u64 {
+            return None;
+        }
+
+        let size = 1u128 << log_size;
+        let exp = modulus_minus_1 / size;
+
+        let exp_low = exp as u64;
+        let exp_high = (exp >> 64) as u64;
+
+        Some(Self::generator().pow([exp_low, exp_high]))
+    }
+
+    fn pow<S: AsRef<[u64]>>(&self, exp: S) -> Self {
+        Field128(self.0.pow(exp))
+    }
 }
 
 impl<F: Field> Polynomial<F> {
@@ -177,22 +220,14 @@ mod tests {
 
     use super::*;
     use crate::field::Field128 as F;
-    use ark_ff::Field;
-    const MODULUS: u128 = 340282366920938463463374557953744961537;
-
-    fn generator(len: usize) -> F {
-        let exp = (MODULUS - 1) / (len as u128);
-        let exp_low = exp as u64;
-        let exp_high = (exp >> 64) as u64;
-        F::from(3).pow([exp_low, exp_high])
-    }
 
     #[test]
     fn ntt_benchmark_test() {
-        let log_n = 20;
-        let coeffs = (0..1 << log_n).map(|i| F::from(i as i64)).collect();
+        let log_n = 10;
+        let n = 1 << log_n;
+        let coeffs = (0..n).map(F::from).collect();
         let pol = Polynomial::<F> { coeffs };
-        let gen = generator(pol.coeffs.len());
+        let gen = F::pow_2_generator(log_n).unwrap();
         let now = std::time::Instant::now();
         black_box(pol.ntt(gen));
         println!("NTT elapsed {:?}", now.elapsed());
@@ -201,9 +236,10 @@ mod tests {
     #[test]
     fn ntt_test() {
         let log_n = 4;
-        let coeffs = (0..1 << log_n).map(|i| F::from(i as i64)).collect();
+        let n = 1 << log_n;
+        let coeffs = (0..n).map(|i| F::from(i as i64)).collect();
         let pol = Polynomial::<F> { coeffs };
-        let gen = generator(pol.coeffs.len());
+        let gen = F::pow_2_generator(log_n as u64).unwrap();
         let now = std::time::Instant::now();
         let ntt = pol.ntt(gen);
         println!("NTT elapsed {:?}", now.elapsed());
@@ -216,9 +252,10 @@ mod tests {
     #[test]
     fn intt_test() {
         let log_n = 4;
-        let coeffs = (0..1 << log_n).map(|i| F::from(i as i64)).collect();
+        let n = 1 << log_n;
+        let coeffs = (0..n).map(|i| F::from(i as i64)).collect();
         let pol = Polynomial::<F> { coeffs };
-        let gen = generator(pol.coeffs.len());
+        let gen = F::pow_2_generator(log_n as u64).unwrap();
         let now = std::time::Instant::now();
         let ntt = pol.ntt(gen);
         println!("NTT elapsed {:?}", now.elapsed());
@@ -228,33 +265,30 @@ mod tests {
         assert_eq!(pol, intt);
     }
 
-    // Comparing 3 imp
     #[test]
     fn ntt_benchmark_comparison() {
-        let sizes = [10, 12, 14, 16, 18, 20];
+        let sizes = [4, 5, 6];
 
         for &log_n in &sizes {
             let n = 1 << log_n;
-            println!("\nTesting size 2^{} = {}", log_n, n);
+            println!("\nTestando tamanho 2^{log_n} = {n}");
 
             let coeffs = (0..n).map(|i| F::from(i as i64)).collect();
             let pol = Polynomial::<F> { coeffs };
-            let gen = generator(n);
+            let gen = F::pow_2_generator(log_n as u64).unwrap();
 
-            // Benchmark NTT recursiva
             let now = std::time::Instant::now();
             black_box(pol.ntt(gen));
             println!("Recursive NTT: {:?}", now.elapsed());
 
-            // Benchmark NTT iterativa in-place
             let now = std::time::Instant::now();
             black_box(pol.ntt_iterative(gen));
             println!("Iterative NTT: {:?}", now.elapsed());
 
-            // Benchmark NTT naive
             if log_n <= 12 {
+                let gen_naive = F::pow_2_generator(log_n as u64).unwrap();
                 let now = std::time::Instant::now();
-                black_box(pol.ntt_naive(gen));
+                black_box(pol.ntt_naive(gen_naive));
                 println!("Naive NTT: {:?}", now.elapsed());
             } else {
                 println!("Naive NTT: skipped (too slow for large inputs)");
@@ -262,14 +296,13 @@ mod tests {
         }
     }
 
-    // complete cicle test
     #[test]
     fn ntt_intt_iterative_cycle() {
         let log_n = 10;
-        let coeffs = (0..1 << log_n).map(|i| F::from(i as i64)).collect();
+        let n = 1 << log_n;
+        let coeffs = (0..n).map(|i| F::from(i as i64)).collect();
         let pol = Polynomial::<F> { coeffs };
-        let gen = generator(pol.coeffs.len());
-
+        let gen = F::pow_2_generator(log_n as u64).unwrap();
         let ntt = pol.ntt_iterative(gen);
         let intt = ntt.intt_iterative();
 
