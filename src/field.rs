@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     iter::{Product, Sum},
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
@@ -20,7 +21,10 @@ pub trait Field = Add<Output = Self>
     + Copy
     + Sum
     + Product
+    + From<i32>
     + From<i64>
+    + From<u128>
+    + Debug
     + Eq;
 
 #[derive(MontConfig)]

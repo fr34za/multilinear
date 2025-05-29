@@ -1,12 +1,9 @@
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha8Rng;
-
 use super::{
     constraints::ConstraintSet,
     evaluation::Mask,
     trace::{Commitment, Trace},
 };
-use crate::field::Field;
+use crate::{field::Field, transcript::Transcript};
 
 pub struct System<F> {
     constraints: ConstraintSet<F>,
@@ -158,23 +155,4 @@ impl<F: Field> ChallengeSet<F> {
     pub fn constraint(&self) -> &[F] {
         &self.constraint
     }
-}
-
-#[derive(Clone)]
-pub struct Transcript {
-    inner: ChaCha8Rng,
-}
-
-#[allow(clippy::new_without_default)]
-impl Transcript {
-    pub fn new() -> Self {
-        let inner = ChaCha8Rng::seed_from_u64(1);
-        Transcript { inner }
-    }
-
-    pub fn next_challenge<F: Field>(&mut self) -> F {
-        F::from(self.inner.random::<i64>())
-    }
-
-    pub fn absorb(&mut self, _values: &[u8]) {}
 }

@@ -1,9 +1,12 @@
 use super::{
     evaluation::Mask,
     polynomials::{Polynomial, PolynomialEvals},
-    system::{System, Transcript},
+    system::System,
 };
-use crate::field::Field;
+use crate::{
+    field::Field,
+    transcript::{HashableField, Transcript},
+};
 
 pub struct Tables<F> {
     matrix: Box<[F]>,
@@ -16,7 +19,7 @@ pub struct SumcheckPolynomial<F> {
     nonzero_coeffs: Box<[F]>,
 }
 
-impl<F: Field> System<F> {
+impl<F: HashableField> System<F> {
     pub fn build_tables(&self) -> Tables<F> {
         let trace = self.trace().unwrap();
         let n_vars = trace.height().trailing_zeros() as usize;
@@ -61,9 +64,14 @@ impl<F: Field> System<F> {
                 evals: evals.into(),
             }
             .interpolate();
+            let sumcheck_pol = SumcheckPolynomial::new(&pol);
+            sumcheck_pol
+                .nonzero_coeffs
+                .iter()
+                .for_each(|coeff| transcript.absorb(coeff.as_ref()));
             let r = transcript.next_challenge();
             previous_sum = pol.evaluate(r);
-            pols.push(SumcheckPolynomial::new(&pol));
+            pols.push(sumcheck_pol);
             tables.fold(r);
         }
         pols.into()
@@ -98,9 +106,7 @@ impl<F: Field> System<F> {
                 .sum()
         }
     }
-}
 
-impl<F: Field + std::fmt::Debug> System<F> {
     pub fn verify_sumcheck_debug(
         &self,
         transcript: &mut Transcript,
@@ -109,12 +115,18 @@ impl<F: Field + std::fmt::Debug> System<F> {
     ) {
         let mut rs = Vec::with_capacity(pols.len());
         let mut iter = pols.iter();
-        let mut pol = iter
-            .next()
-            .expect("At least one polynomial is expected")
-            .to_polynomial(sum);
+        let sumcheck_pol = iter.next().expect("At least one polynomial is expected");
+        sumcheck_pol
+            .nonzero_coeffs
+            .iter()
+            .for_each(|coeff| transcript.absorb(coeff.as_ref()));
+        let mut pol = sumcheck_pol.to_polynomial(sum);
         for sumcheck_pol in iter {
             let r = transcript.next_challenge();
+            sumcheck_pol
+                .nonzero_coeffs
+                .iter()
+                .for_each(|coeff| transcript.absorb(coeff.as_ref()));
             pol = sumcheck_pol.to_polynomial(pol.evaluate(r));
             rs.push(r);
         }

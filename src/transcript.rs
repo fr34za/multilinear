@@ -2,6 +2,7 @@ use crate::field::Field;
 use crate::field::Field128;
 use sha2::{Digest, Sha256};
 
+#[derive(Clone)]
 pub struct Transcript {
     state: Sha256,
 }
@@ -30,6 +31,15 @@ impl Transcript {
         let mut random_bytes = [0u8; 32];
         random_bytes.copy_from_slice(&result[..32]);
         random_bytes
+    }
+
+    pub fn absorb(&mut self, values: &[u8]) {
+        self.state.update(values);
+    }
+
+    pub fn next_challenge<F: Field>(&mut self) -> F {
+        let r = u128::from_le_bytes(self.random()[0..16].try_into().unwrap());
+        F::from(r)
     }
 }
 
