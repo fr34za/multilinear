@@ -14,6 +14,13 @@ pub trait NttField: Field {
 
     fn pow_2_generator(log_size: u64) -> Option<Self>;
 
+    // 1, gen, gen^2, gen^3, ..., gen^(2^log_size - 1)
+    fn pow_2_generator_powers(log_size: u64) -> Option<Vec<Self>> {
+        let gen = Self::pow_2_generator(log_size)?;
+        // generate all 2^log_size powers of `gen` starting from 1 and return
+        todo!()
+    }
+
     fn pow<S: AsRef<[u64]>>(&self, exp: S) -> Self;
 }
 
@@ -56,6 +63,8 @@ impl<F: Field> Polynomial<F> {
             .fold(F::from(0), |acc, &coeff| acc * x + coeff)
     }
 
+    // FIX
+    // substitute gen with gen_pows: &[F]
     pub fn ntt(&self, gen: F) -> LagrangePolynomial<F> {
         let n = self.coeffs.len();
         assert!(
@@ -69,10 +78,12 @@ impl<F: Field> Polynomial<F> {
 
         let mut len = 2;
         while len <= n {
+            // gen = gen_pows[1]
             let mut wlen = gen;
             for _ in 0..(n / len).trailing_zeros() {
                 wlen = wlen * wlen;
             }
+            // wlen = gen ^ (n / len) = gen_pows[n / len]
 
             for i in (0..n).step_by(len) {
                 let mut w = F::from(1);
@@ -80,6 +91,7 @@ impl<F: Field> Polynomial<F> {
                     let u = values[i + j];
                     let v = values[i + j + len / 2] * w;
                     w *= wlen;
+                    // w = gen_pows[(n/len) * i]
                     values[i + j] = u + v;
                     values[i + j + len / 2] = u - v;
                 }
@@ -108,8 +120,9 @@ pub struct LagrangePolynomial<F> {
     pub gen: F,
     pub evals: Vec<F>,
 }
-
 impl<F: Field> LagrangePolynomial<F> {
+    // FIX
+    // substitute gen with gen_pows: &[F]
     pub fn intt(&self) -> Polynomial<F> {
         let n = self.evals.len();
         assert!(n.is_power_of_two());
@@ -152,6 +165,7 @@ mod tests {
     use std::hint::black_box;
 
     #[test]
+    // FIX
     fn ntt_benchmark_test() {
         let log_n = 24;
         let n = 1 << log_n;
@@ -164,6 +178,7 @@ mod tests {
     }
 
     #[test]
+    // FIX
     fn intt_test() {
         let log_n = 18;
         let n = 1 << log_n;

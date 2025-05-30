@@ -12,7 +12,8 @@ pub struct ProverData<F> {
 pub const LOG_BLOWUP: usize = 1;
 pub const NUM_QUERIES: usize = 128;
 
-pub fn reed_solomon<F: NttField>(mut coeffs: Vec<F>) -> Vec<F> {
+// FIX add `gen_pows: &[F]` to `reed_solomon`
+pub fn reed_solomon<F: NttField>(mut coeffs: Vec<F>, gen_pows: &[F]) -> Vec<F> {
     // first, multiply the size of `coeffs` by a factor of `blowup` through adding zeros
     let n = coeffs.len();
     let blowup = 1 << LOG_BLOWUP;
@@ -54,8 +55,8 @@ fn commit_rs_code<F: HashableField>(code: Vec<F>) -> Merkle<ReedSolomonPair<F>> 
     Merkle::commit(pairs)
 }
 
-impl<F: HashableField> ProverData<F> {
-    pub fn init(code: Vec<F>, transcript: &mut Transcript) -> Self {
+impl<F: HashableField + NttField> ProverData<F> {
+    pub fn init(code: &[F], transcript: &mut Transcript) -> Self {
         // `values` must be power of two.
         assert!(
             code.len().is_power_of_two(),
@@ -63,7 +64,7 @@ impl<F: HashableField> ProverData<F> {
         );
         // commit to a `Merkle` tree using `to_bytes` method.
         let mut commitments = Vec::new();
-        let merkle = commit_rs_code(code);
+        let merkle = commit_rs_code(code.to_vec());
         let root = merkle.root();
         // add to `commitments`.
         commitments.push(merkle);
@@ -76,7 +77,8 @@ impl<F: HashableField> ProverData<F> {
     }
 
     #[allow(clippy::needless_range_loop)]
-    pub fn fold_step(&mut self, gen: F, transcript: &mut Transcript) {
+    // FIX use `gen_pows`, and add which step of the fold it is (call it `k` maybe)
+    pub fn fold_step(&mut self, gen_pows: &[F], k: usize, transcript: &mut Transcript) {
         let last_data = self.commitments.last().unwrap().data.clone();
         let n = last_data.len() * 2;
         let blowup = 1 << LOG_BLOWUP;
@@ -87,19 +89,32 @@ impl<F: HashableField> ProverData<F> {
         let r = F::from_digest(&random_bytes);
         let half_n = n >> 1;
         let mut next_data = Vec::with_capacity(half_n);
-        let mut gen_pow = F::from(1);
+        let half = F::from(1) / F::from(2); // FIX move (F::from(1) / F::from(2)) outside the loop!
+
         for i in 0..half_n {
             // p(gen^i)
             let a = last_data[i].value;
             // p(-gen^i)
             let b = last_data[i].minus_value;
             // even(x^2) = (p(x) + p(-x))/2, where x = gen^i
-            let even = (a + b) / F::from(2);
+
+            let even = (a + b) * half;
             // odd(x^2) = (p(x) - p(-x))/2x, where x = gen^i
-            let odd = (a - b) / (F::from(2) * gen_pow);
+            // FIX gen_pow is gen_pows[i * (1 << k)]
+            // FIX the inverse of gen_pow is also a power!!
+            // FIX thus it is in fact `gen_pows[len - i * (1 << k)]` where len=gen_pows.len()
+            let gen_pow_index = i * (1 << k);
+            println!(
+                "gen_pow_index: {}, gen_pows.len(): {}",
+                gen_pow_index,
+                gen_pows.len()
+            );
+            let odd = (a - b) / (F::from(2) * gen_pows[gen_pows.len() - gen_pow_index]);
+
             // p(x) + p(-x) == 2*even(x^2)
-            next_data.push(even + r * odd);
-            gen_pow *= gen;
+            // FIX instead of multiplying both even and odd by `half` you can
+            // FIX multiply the sum `even + r * odd` by half
+            next_data.push((even + r * odd) * half);
         }
 
         if half_n == blowup {
@@ -122,12 +137,16 @@ impl<F: HashableField> ProverData<F> {
         transcript.append_message(b"merkle_root", root.as_slice());
     }
 
+    // FIX take `gen_pows`
     pub fn fold(gen: F, code: Vec<F>, transcript: &mut Transcript) -> Self {
-        let mut prover_data = Self::init(code, transcript);
-        let mut current_gen = gen;
+        let mut prover_data = Self::init(&code, transcript);
+        let mut k = 0;
+        let gen_pows: Vec<F> = (0..code.len()).map(|i| gen.pow([i as u64])).collect();
+
         while prover_data.last_element.is_none() {
-            prover_data.fold_step(current_gen, transcript);
-            current_gen *= current_gen;
+            // pass `k`, the power of the generator
+            prover_data.fold_step(&gen_pows, k, transcript);
+            k += 1;
         }
         prover_data
     }
@@ -339,13 +358,20 @@ mod tests {
     // elements, or 16mb), serializes it and prints the size of the proof to
     // serialize please use `Serde` and `Bincode`. You'll have to add derive
     // instances for Serde in the proof datatype
+
+    // FIX
     #[test]
     fn prove_and_verify_test() {
         let log_n = 10;
         let values: Vec<Field128> = (0..1 << log_n)
             .map(|i| Field128::from(i as i64 * 7 + 3))
             .collect();
-        let code = reed_solomon(values);
+
+        // Calculate gen_pows
+        let gen = Field128::pow_2_generator(log_n as u64).unwrap();
+        let gen_pows: Vec<Field128> = (0..values.len()).map(|i| gen.pow([i as u64])).collect();
+
+        let code = reed_solomon(values, &gen_pows);
         let mut transcript = Transcript::new();
         let proof = FriProof::prove(code, &mut transcript);
         proof.verify().unwrap();
@@ -359,7 +385,12 @@ mod tests {
 
         // Create a large RS code with 2 million elements
         let values: Vec<Field128> = (0..1 << 20).map(|i| Field128::from(i as i64)).collect();
-        let code = reed_solomon(values);
+
+        // Calculate gen_pows
+        let gen = Field128::pow_2_generator(20).unwrap();
+        let gen_pows: Vec<Field128> = (0..values.len()).map(|i| gen.pow([i as u64])).collect();
+
+        let code = reed_solomon(values, &gen_pows);
         let mut transcript = Transcript::new();
         let now = Instant::now();
         let proof = FriProof::prove(code, &mut transcript);
