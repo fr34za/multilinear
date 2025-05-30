@@ -13,7 +13,8 @@ impl<F: Field> Polynomial<F> {
             .fold(F::from(0), |acc, &coeff| acc * x + coeff)
     }
 
-    pub fn evaluate_over_domain(&self, n: usize) -> PolynomialEvals<F> {
+    pub fn evaluate_over_domain(&self) -> PolynomialEvals<F> {
+        let n = self.coeffs.len();
         let evals = (0..n)
             .map(|i| {
                 let x = F::from(i as i64);
@@ -96,6 +97,96 @@ fn poly_mul<F: Field>(a: &[F], b: &[F]) -> Vec<F> {
     result
 }
 
+#[derive(PartialEq, Eq, Debug)]
+pub struct MultilinearPolynomial<F> {
+    pub coeffs: Vec<F>,
+}
+
+#[derive(PartialEq, Eq, Debug)]
+pub struct MultilinearPolynomialEvals<F> {
+    pub evals: Vec<F>,
+}
+
+impl<F: Field> MultilinearPolynomial<F> {
+    pub fn to_evaluation(&self) -> MultilinearPolynomialEvals<F> {
+        let n = self.coeffs.len().trailing_zeros() as usize;
+        let mut evals = self.coeffs.to_vec();
+        for i in 0..n {
+            let mask = 1 << i;
+            for j in 0..(1 << n) {
+                if (j & mask) != 0 {
+                    let masked = evals[j ^ mask];
+                    evals[j] += masked;
+                }
+            }
+        }
+        MultilinearPolynomialEvals { evals }
+    }
+
+    pub fn evaluate(&self, args: &[F]) -> F {
+        assert_eq!(
+            1 << args.len(),
+            self.coeffs.len().next_power_of_two(),
+            "Wrong number of arguments"
+        );
+
+        self.coeffs
+            .iter()
+            .enumerate()
+            .map(|(pos, &coeff)| {
+                let mut term = coeff;
+                for (bit_pos, &arg) in args.iter().enumerate() {
+                    if (pos >> bit_pos) & 1 == 1 {
+                        term *= arg;
+                    }
+                }
+                term
+            })
+            .sum()
+    }
+}
+
+impl<F: Field> MultilinearPolynomialEvals<F> {
+    pub fn to_coefficient(&self) -> MultilinearPolynomial<F> {
+        let n = self.evals.len().trailing_zeros() as usize;
+        let mut coeffs = self.evals.to_vec();
+        for i in 0..n {
+            let mask = 1 << i;
+            for j in 0..(1 << n) {
+                if (j & mask) != 0 {
+                    let masked = coeffs[j ^ mask];
+                    coeffs[j] -= masked;
+                }
+            }
+        }
+        MultilinearPolynomial { coeffs }
+    }
+
+    pub fn evaluate(&self, args: &[F]) -> F {
+        assert_eq!(
+            1 << args.len(),
+            self.evals.len().next_power_of_two(),
+            "Wrong number of arguments"
+        );
+
+        self.evals
+            .iter()
+            .enumerate()
+            .map(|(pos, &eval)| {
+                let mut term = eval;
+                for (bit_pos, &arg) in args.iter().enumerate() {
+                    if (pos >> bit_pos) & 1 == 1 {
+                        term *= arg;
+                    } else {
+                        term *= F::from(1) - arg;
+                    }
+                }
+                term
+            })
+            .sum()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::field::Field128 as F;
@@ -109,6 +200,16 @@ mod tests {
             evals: [f(0), f(1), f(4), f(8), f(9), f(3)].into(),
         };
         let pol = evals.interpolate();
-        assert_eq!(evals, pol.evaluate_over_domain(6));
+        assert_eq!(evals, pol.evaluate_over_domain());
+    }
+
+    #[test]
+    fn multilinear_conversion_test() {
+        let f = F::from;
+        let evals = MultilinearPolynomialEvals {
+            evals: [f(0), f(1), f(4), f(8), f(9), f(3)].into(),
+        };
+        let pol = evals.to_coefficient();
+        assert_eq!(evals, pol.to_evaluation());
     }
 }
