@@ -1,12 +1,9 @@
 #![allow(clippy::needless_range_loop)]
 
-use super::{
-    evaluation::Mask,
-    polynomials::{Polynomial, PolynomialEvals},
-    system::System,
-};
+use super::{evaluation::Mask, system::System};
 use crate::{
     field::Field,
+    polynomials::{Polynomial, PolynomialEvals},
     transcript::{HashableField, Transcript},
 };
 
