@@ -23,7 +23,7 @@ pub fn reed_solomon<F: NttField>(mut coeffs: Vec<F>) -> Vec<F> {
     let log_size = domain_size.trailing_zeros();
     let gen = F::pow_2_generator(log_size as u64).unwrap();
     // use `ntt` to compute the Reed-Solomon encoding.
-    let lagrange = Polynomial { coeffs }.ntt_iterative(gen);
+    let lagrange = Polynomial { coeffs }.ntt(gen);
     lagrange.evals
 }
 
@@ -327,6 +327,8 @@ impl<F: HashableField + NttField> FriProof<F> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
     use crate::field::Field128;
     use bincode; // Ensure bincode is imported
@@ -355,16 +357,18 @@ mod tests {
             .with_little_endian()
             .with_fixed_int_encoding();
 
-        // Create a large RS code with 1 million elements
+        // Create a large RS code with 2 million elements
         let values: Vec<Field128> = (0..1 << 20).map(|i| Field128::from(i as i64)).collect();
         let code = reed_solomon(values);
         let mut transcript = Transcript::new();
+        let now = Instant::now();
         let proof = FriProof::prove(code, &mut transcript);
+        println!("Proof time: {:?}", now.elapsed());
 
         // Serialize the proof using Serde and Bincode
         let serialized_proof =
             bincode::serde::encode_to_vec(&proof, config).expect("Serialization failed");
-        println!("Size of serialized proof: {} bytes", serialized_proof.len());
+        println!("Proof size: {} bytes", serialized_proof.len());
 
         // Deserialize the proof
         let _: (FriProof<Field128>, usize) =
