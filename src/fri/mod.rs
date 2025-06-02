@@ -12,14 +12,14 @@ pub struct ProverData<F> {
 pub const LOG_BLOWUP: usize = 1;
 pub const NUM_QUERIES: usize = 128;
 
-pub fn reed_solomon<F: NttField>(mut coeffs: Vec<F>, gen_pows: &[F]) -> Vec<F> {
+pub fn reed_solomon<F: NttField>(mut coeffs: Vec<F>, gen: F) -> Vec<F> {
     // first, multiply the size of `coeffs` by a factor of `blowup` through adding zeros
     let n = coeffs.len();
     let blowup = 1 << LOG_BLOWUP;
     assert!(blowup > 1);
     coeffs.resize(blowup * n, F::from(0));
     // use `ntt` to compute the Reed-Solomon encoding.
-    let lagrange = Polynomial { coeffs }.ntt(gen_pows);
+    let lagrange = Polynomial { coeffs }.ntt(gen);
     lagrange.evals
 }
 
@@ -97,7 +97,6 @@ impl<F: HashableField + NttField> ProverData<F> {
             // p(-gen^i)
             let b = last_data[i].minus_value;
             // even(x^2) = (p(x) + p(-x))/2, where x = gen^i
-
             let even = a + b;
             // odd(x^2) = (p(x) - p(-x))/2x, where x = gen^i
 
@@ -352,14 +351,14 @@ mod tests {
         // Calculate gen_pows
         let gen_pows = Field128::pow_2_generator_powers((log_n + LOG_BLOWUP) as u64).unwrap();
 
-        let code = reed_solomon(values, &gen_pows);
+        let code = reed_solomon(values, gen_pows[1]);
         let mut transcript = Transcript::new();
         let proof = FriProof::prove(&code, &gen_pows, &mut transcript);
         proof.verify().unwrap();
     }
 
     #[test]
-    fn big_rs_code_proof_test() {
+    fn fri_benchmark_test() {
         let config = bincode::config::standard()
             .with_little_endian()
             .with_fixed_int_encoding();
@@ -368,14 +367,21 @@ mod tests {
         let values: Vec<Field128> = (0..1 << 20).map(|i| Field128::from(i as i64)).collect();
 
         // Calculate gen_pows
+        let now = Instant::now();
         let gen_pows = Field128::pow_2_generator_powers(20 + LOG_BLOWUP as u64).unwrap();
+        println!("Generator powers time: {:?}", now.elapsed());
 
-        let code = reed_solomon(values, &gen_pows);
+        let now = Instant::now();
+        let code = reed_solomon(values, gen_pows[1]);
+        println!("Reed solomon encoding time: {:?}", now.elapsed());
         let mut transcript = Transcript::new();
         let now = Instant::now();
         let proof = FriProof::prove(&code, &gen_pows, &mut transcript);
         println!("Proof time: {:?}", now.elapsed());
 
+        let now = Instant::now();
+        proof.verify().unwrap();
+        println!("Verify time: {:?}", now.elapsed());
         // Serialize the proof using Serde and Bincode
         let serialized_proof =
             bincode::serde::encode_to_vec(&proof, config).expect("Serialization failed");

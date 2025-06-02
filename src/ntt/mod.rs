@@ -61,7 +61,7 @@ impl NttField for Field128 {
     }
 }
 
-impl<F: Field> Polynomial<F> {
+impl<F: NttField> Polynomial<F> {
     pub fn evaluate(&self, x: F) -> F {
         self.coeffs
             .iter()
@@ -69,41 +69,41 @@ impl<F: Field> Polynomial<F> {
             .fold(F::from(0), |acc, &coeff| acc * x + coeff)
     }
 
-    pub fn ntt(&self, gen_pows: &[F]) -> LagrangePolynomial<F> {
+    pub fn ntt(&self, gen: F) -> LagrangePolynomial<F> {
         let n = self.coeffs.len();
         assert!(
             n.is_power_of_two(),
             "The number of coeffs must be a power of 2"
-        );
-        assert!(
-            gen_pows.len() == n,
-            "Array of generator powers must have exactly the same number of elements"
         );
 
         let mut values = self.coeffs.clone();
 
         bit_reverse_permutation(&mut values);
 
-        let mut len = 2;
+        // unroll the first step
+        for i in (0..n).step_by(2) {
+            let u = values[i];
+            let v = values[i + 1];
+            values[i] = u + v;
+            values[i + 1] = u - v;
+        }
+        let mut len = 4;
         while len <= n {
+            let wlen = gen.pow([(n / len) as u64]);
             for i in (0..n).step_by(len) {
                 let mut w = F::from(1);
                 for j in 0..len / 2 {
-                    let u = values[i + j];
                     let v = values[i + j + len / 2] * w;
+                    w *= wlen;
+                    let u = values[i + j];
                     values[i + j] = u + v;
                     values[i + j + len / 2] = u - v;
-                    // Use gen_pows[(n/len) * (j+1)] instead of computing w
-                    w = gen_pows[(n / len) * (j + 1)];
                 }
             }
             len *= 2;
         }
 
-        LagrangePolynomial {
-            gen_pows: gen_pows.to_vec(),
-            evals: values,
-        }
+        LagrangePolynomial { gen, evals: values }
     }
 }
 
@@ -121,33 +121,38 @@ fn bit_reverse_permutation<F>(values: &mut [F]) {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LagrangePolynomial<F> {
-    pub gen_pows: Vec<F>,
+    pub gen: F,
     pub evals: Vec<F>,
 }
-impl<F: Field> LagrangePolynomial<F> {
+
+impl<F: NttField> LagrangePolynomial<F> {
     pub fn intt(&self) -> Polynomial<F> {
         let n = self.evals.len();
         assert!(n.is_power_of_two());
-        assert!(
-            self.gen_pows.len() >= n,
-            "Generator powers array must have at least n elements"
-        );
 
         let mut values = self.evals.clone();
 
         bit_reverse_permutation(&mut values);
 
-        let mut len = 2;
+        let gen_inv = F::from(1) / self.gen;
+        // unroll the first step
+        for i in (0..n).step_by(2) {
+            let u = values[i];
+            let v = values[i + 1];
+            values[i] = u + v;
+            values[i + 1] = u - v;
+        }
+        let mut len = 4;
         while len <= n {
+            let wlen = gen_inv.pow([(n / len) as u64]);
             for i in (0..n).step_by(len) {
                 let mut w = F::from(1);
                 for j in 0..len / 2 {
                     let u = values[i + j];
                     let v = values[i + j + len / 2] * w;
+                    w *= wlen;
                     values[i + j] = u + v;
                     values[i + j + len / 2] = u - v;
-                    // Use gen_inv_pows[(n/len) * (j+1)] instead of computing w
-                    w = self.gen_pows[n - (n / len) * (j + 1)];
                 }
             }
             len *= 2;
@@ -171,12 +176,9 @@ mod tests {
         let n = 1 << log_n;
         let coeffs = (0..n).map(F::from).collect();
         let pol = Polynomial::<F> { coeffs };
-
-        // Generate powers of the generator
-        let gen_pows = F::pow_2_generator_powers(log_n).unwrap();
-
+        let gen = F::pow_2_generator(log_n).unwrap();
         let now = std::time::Instant::now();
-        black_box(pol.ntt(&gen_pows));
+        black_box(pol.ntt(gen));
         println!("NTT elapsed {:?}", now.elapsed());
     }
 
@@ -186,18 +188,13 @@ mod tests {
         let n = 1 << log_n;
         let coeffs = (0..n).map(|i| F::from(i as i64)).collect();
         let pol = Polynomial::<F> { coeffs };
-
-        // Generate powers of the generator
-        let gen_pows = F::pow_2_generator_powers(log_n as u64).unwrap();
-
+        let gen = F::pow_2_generator(log_n as u64).unwrap();
         let now = std::time::Instant::now();
-        let ntt = pol.ntt(&gen_pows);
+        let ntt = pol.ntt(gen);
         println!("NTT elapsed {:?}", now.elapsed());
-
         let now = std::time::Instant::now();
         let intt = ntt.intt();
         println!("INTT elapsed {:?}", now.elapsed());
-
         assert_eq!(pol, intt);
     }
 }
