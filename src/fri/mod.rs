@@ -18,14 +18,6 @@ pub fn reed_solomon<F: NttField>(mut coeffs: Vec<F>, gen_pows: &[F]) -> Vec<F> {
     let blowup = 1 << LOG_BLOWUP;
     assert!(blowup > 1);
     coeffs.resize(blowup * n, F::from(0));
-
-    // compute the domain size
-    let domain_size = coeffs.len();
-    assert!(
-        gen_pows.len() >= domain_size,
-        "Generator powers array must have at least domain_size elements"
-    );
-
     // use `ntt` to compute the Reed-Solomon encoding.
     let lagrange = Polynomial { coeffs }.ntt(gen_pows);
     lagrange.evals
@@ -46,7 +38,7 @@ impl<F: AsRef<[u8]>> AsRef<[u8]> for ReedSolomonPair<F> {
     }
 }
 
-fn commit_rs_code<F: HashableField>(code: Vec<F>) -> Merkle<ReedSolomonPair<F>> {
+fn commit_rs_code<F: HashableField>(code: &[F]) -> Merkle<ReedSolomonPair<F>> {
     let n = code.len();
     let half_n = n / 2;
     let pairs = (0..half_n)
@@ -67,7 +59,7 @@ impl<F: HashableField + NttField> ProverData<F> {
         );
         // commit to a `Merkle` tree using `to_bytes` method.
         let mut commitments = Vec::new();
-        let merkle = commit_rs_code(code.to_vec());
+        let merkle = commit_rs_code(&code);
         let root = merkle.root();
         // add to `commitments`.
         commitments.push(merkle);
@@ -95,28 +87,26 @@ impl<F: HashableField + NttField> ProverData<F> {
         // Move half calculation outside the loop
         let half = F::from(1) / F::from(2);
 
-        for i in 0..half_n {
+        // The first case is special since gen_pows[0] == 1
+        let a = last_data[0].value;
+        let b = last_data[0].minus_value;
+        next_data.push(((a + b) + r * (a - b)) * half);
+        for i in 1..half_n {
             // p(gen^i)
             let a = last_data[i].value;
             // p(-gen^i)
             let b = last_data[i].minus_value;
             // even(x^2) = (p(x) + p(-x))/2, where x = gen^i
 
-            let even = (a + b) * half;
+            let even = a + b;
             // odd(x^2) = (p(x) - p(-x))/2x, where x = gen^i
 
             // Calculate gen_pow_index using gen_pows[len - i * (1 << k)]
             let gen_pow_index = i * (1 << k);
             let gen_pows_len = gen_pows.len();
 
-            // Ensure index is within bounds
-            assert!(
-                gen_pow_index < gen_pows_len,
-                "Generator power index out of bounds"
-            );
-
             // Use gen_pows[len - i * (1 << k)] for the inverse
-            let odd = (a - b) / (F::from(2) * gen_pows[gen_pows_len - gen_pow_index - 1]);
+            let odd = (a - b) * (gen_pows[gen_pows_len - gen_pow_index]);
 
             // Apply half to the sum (even + r * odd) instead of individually
             next_data.push((even + r * odd) * half);
@@ -134,7 +124,7 @@ impl<F: HashableField + NttField> ProverData<F> {
             return;
         }
         // `commit` to Merkle, etc
-        let merkle = commit_rs_code(next_data);
+        let merkle = commit_rs_code(&next_data);
         let root = merkle.root();
         self.commitments.push(merkle);
 
@@ -142,12 +132,8 @@ impl<F: HashableField + NttField> ProverData<F> {
         transcript.append_message(b"merkle_root", root.as_slice());
     }
 
-    pub fn fold(gen: F, code: Vec<F>, transcript: &mut Transcript) -> Self {
+    pub fn fold(gen_pows: &[F], code: &[F], transcript: &mut Transcript) -> Self {
         let mut prover_data = Self::init(&code, transcript);
-
-        // Generate gen_pows
-        let log_size = code.len().trailing_zeros() as u64;
-        let gen_pows = F::pow_2_generator_powers(log_size).unwrap();
 
         let mut k = 0;
         while prover_data.last_element.is_none() {
@@ -278,14 +264,11 @@ pub enum FriProofError {
 }
 
 impl<F: HashableField + NttField> FriProof<F> {
-    pub fn prove(code: Vec<F>, transcript: &mut Transcript) -> FriProof<F> {
+    pub fn prove(code: &[F], gen_pows: &[F], transcript: &mut Transcript) -> FriProof<F> {
         // get the generator for length = blowup * message.len
         let domain_size = code.len();
-        let log_size = domain_size.trailing_zeros();
-        let gen = F::pow_2_generator(log_size as u64).unwrap();
-
         // call `fold`
-        let prover_data = ProverData::fold(gen, code, transcript);
+        let prover_data = ProverData::fold(gen_pows, &code, transcript);
         // for `0..NUM_QUERIES` generate random index between `0..domain_size/2`
         let mut queries = Vec::with_capacity(NUM_QUERIES);
         for _ in 0..NUM_QUERIES {
@@ -367,12 +350,11 @@ mod tests {
             .collect();
 
         // Calculate gen_pows
-        let gen = Field128::pow_2_generator(log_n as u64).unwrap();
-        let gen_pows = Field128::pow_2_generator_powers(log_n as u64).unwrap();
+        let gen_pows = Field128::pow_2_generator_powers((log_n + LOG_BLOWUP) as u64).unwrap();
 
         let code = reed_solomon(values, &gen_pows);
         let mut transcript = Transcript::new();
-        let proof = FriProof::prove(code, &mut transcript);
+        let proof = FriProof::prove(&code, &gen_pows, &mut transcript);
         proof.verify().unwrap();
     }
 
@@ -386,12 +368,12 @@ mod tests {
         let values: Vec<Field128> = (0..1 << 20).map(|i| Field128::from(i as i64)).collect();
 
         // Calculate gen_pows
-        let gen_pows = Field128::pow_2_generator_powers(20).unwrap();
+        let gen_pows = Field128::pow_2_generator_powers(20 + LOG_BLOWUP as u64).unwrap();
 
         let code = reed_solomon(values, &gen_pows);
         let mut transcript = Transcript::new();
         let now = Instant::now();
-        let proof = FriProof::prove(code, &mut transcript);
+        let proof = FriProof::prove(&code, &gen_pows, &mut transcript);
         println!("Proof time: {:?}", now.elapsed());
 
         // Serialize the proof using Serde and Bincode

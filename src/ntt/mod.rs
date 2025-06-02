@@ -20,13 +20,10 @@ pub trait NttField: Field {
         let size = 1 << log_size;
         let mut powers = Vec::with_capacity(size);
         let mut current = Self::from(1);
-        powers.push(current);
-
-        for _ in 1..size {
-            current = current * gen;
+        for _ in 0..size {
             powers.push(current);
+            current = current * gen;
         }
-
         Some(powers)
     }
 
@@ -79,8 +76,8 @@ impl<F: Field> Polynomial<F> {
             "The number of coeffs must be a power of 2"
         );
         assert!(
-            gen_pows.len() >= n,
-            "Generator powers array must have at least n elements"
+            gen_pows.len() == n,
+            "Array of generator powers must have exactly the same number of elements"
         );
 
         let mut values = self.coeffs.clone();
@@ -89,9 +86,6 @@ impl<F: Field> Polynomial<F> {
 
         let mut len = 2;
         while len <= n {
-            // Use gen_pows[n/len] instead of computing wlen
-            let wlen = gen_pows[n / len];
-
             for i in (0..n).step_by(len) {
                 let mut w = F::from(1);
                 for j in 0..len / 2 {
@@ -143,18 +137,8 @@ impl<F: Field> LagrangePolynomial<F> {
 
         bit_reverse_permutation(&mut values);
 
-        // Compute inverse generator powers
-        let mut gen_inv_pows = Vec::with_capacity(n);
-        for i in 0..n {
-            // The inverse of gen_pows[i] is 1/gen_pows[i]
-            gen_inv_pows.push(F::from(1) / self.gen_pows[i]);
-        }
-
         let mut len = 2;
         while len <= n {
-            // Use gen_inv_pows[n/len] instead of computing wlen
-            let wlen = gen_inv_pows[n / len];
-
             for i in (0..n).step_by(len) {
                 let mut w = F::from(1);
                 for j in 0..len / 2 {
@@ -163,7 +147,7 @@ impl<F: Field> LagrangePolynomial<F> {
                     values[i + j] = u + v;
                     values[i + j + len / 2] = u - v;
                     // Use gen_inv_pows[(n/len) * (j+1)] instead of computing w
-                    w = gen_inv_pows[(n / len) * (j + 1)];
+                    w = self.gen_pows[n - (n / len) * (j + 1)];
                 }
             }
             len *= 2;
