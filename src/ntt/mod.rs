@@ -17,8 +17,17 @@ pub trait NttField: Field {
     // 1, gen, gen^2, gen^3, ..., gen^(2^log_size - 1)
     fn pow_2_generator_powers(log_size: u64) -> Option<Vec<Self>> {
         let gen = Self::pow_2_generator(log_size)?;
-        // generate all 2^log_size powers of `gen` starting from 1 and return
-        todo!()
+        let size = 1 << log_size;
+        let mut powers = Vec::with_capacity(size);
+        let mut current = Self::from(1);
+        powers.push(current);
+
+        for _ in 1..size {
+            current = current * gen;
+            powers.push(current);
+        }
+
+        Some(powers)
     }
 
     fn pow<S: AsRef<[u64]>>(&self, exp: S) -> Self;
@@ -63,13 +72,15 @@ impl<F: Field> Polynomial<F> {
             .fold(F::from(0), |acc, &coeff| acc * x + coeff)
     }
 
-    // FIX
-    // substitute gen with gen_pows: &[F]
-    pub fn ntt(&self, gen: F) -> LagrangePolynomial<F> {
+    pub fn ntt(&self, gen_pows: &[F]) -> LagrangePolynomial<F> {
         let n = self.coeffs.len();
         assert!(
             n.is_power_of_two(),
             "The number of coeffs must be a power of 2"
+        );
+        assert!(
+            gen_pows.len() >= n,
+            "Generator powers array must have at least n elements"
         );
 
         let mut values = self.coeffs.clone();
@@ -78,28 +89,27 @@ impl<F: Field> Polynomial<F> {
 
         let mut len = 2;
         while len <= n {
-            // gen = gen_pows[1]
-            let mut wlen = gen;
-            for _ in 0..(n / len).trailing_zeros() {
-                wlen = wlen * wlen;
-            }
-            // wlen = gen ^ (n / len) = gen_pows[n / len]
+            // Use gen_pows[n/len] instead of computing wlen
+            let wlen = gen_pows[n / len];
 
             for i in (0..n).step_by(len) {
                 let mut w = F::from(1);
                 for j in 0..len / 2 {
                     let u = values[i + j];
                     let v = values[i + j + len / 2] * w;
-                    w *= wlen;
-                    // w = gen_pows[(n/len) * i]
                     values[i + j] = u + v;
                     values[i + j + len / 2] = u - v;
+                    // Use gen_pows[(n/len) * (j+1)] instead of computing w
+                    w = gen_pows[(n / len) * (j + 1)];
                 }
             }
             len *= 2;
         }
 
-        LagrangePolynomial { gen, evals: values }
+        LagrangePolynomial {
+            gen_pows: gen_pows.to_vec(),
+            evals: values,
+        }
     }
 }
 
@@ -117,36 +127,43 @@ fn bit_reverse_permutation<F>(values: &mut [F]) {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LagrangePolynomial<F> {
-    pub gen: F,
+    pub gen_pows: Vec<F>,
     pub evals: Vec<F>,
 }
 impl<F: Field> LagrangePolynomial<F> {
-    // FIX
-    // substitute gen with gen_pows: &[F]
     pub fn intt(&self) -> Polynomial<F> {
         let n = self.evals.len();
         assert!(n.is_power_of_two());
+        assert!(
+            self.gen_pows.len() >= n,
+            "Generator powers array must have at least n elements"
+        );
 
         let mut values = self.evals.clone();
 
         bit_reverse_permutation(&mut values);
 
-        let gen_inv = F::from(1) / self.gen;
+        // Compute inverse generator powers
+        let mut gen_inv_pows = Vec::with_capacity(n);
+        for i in 0..n {
+            // The inverse of gen_pows[i] is 1/gen_pows[i]
+            gen_inv_pows.push(F::from(1) / self.gen_pows[i]);
+        }
+
         let mut len = 2;
         while len <= n {
-            let mut wlen = gen_inv;
-            for _ in 0..(n / len).trailing_zeros() {
-                wlen = wlen * wlen;
-            }
+            // Use gen_inv_pows[n/len] instead of computing wlen
+            let wlen = gen_inv_pows[n / len];
 
             for i in (0..n).step_by(len) {
                 let mut w = F::from(1);
                 for j in 0..len / 2 {
                     let u = values[i + j];
                     let v = values[i + j + len / 2] * w;
-                    w *= wlen;
                     values[i + j] = u + v;
                     values[i + j + len / 2] = u - v;
+                    // Use gen_inv_pows[(n/len) * (j+1)] instead of computing w
+                    w = gen_inv_pows[(n / len) * (j + 1)];
                 }
             }
             len *= 2;
@@ -165,32 +182,38 @@ mod tests {
     use std::hint::black_box;
 
     #[test]
-    // FIX
     fn ntt_benchmark_test() {
         let log_n = 24;
         let n = 1 << log_n;
         let coeffs = (0..n).map(F::from).collect();
         let pol = Polynomial::<F> { coeffs };
-        let gen = F::pow_2_generator(log_n).unwrap();
+
+        // Generate powers of the generator
+        let gen_pows = F::pow_2_generator_powers(log_n).unwrap();
+
         let now = std::time::Instant::now();
-        black_box(pol.ntt(gen));
+        black_box(pol.ntt(&gen_pows));
         println!("NTT elapsed {:?}", now.elapsed());
     }
 
     #[test]
-    // FIX
     fn intt_test() {
         let log_n = 18;
         let n = 1 << log_n;
         let coeffs = (0..n).map(|i| F::from(i as i64)).collect();
         let pol = Polynomial::<F> { coeffs };
-        let gen = F::pow_2_generator(log_n as u64).unwrap();
+
+        // Generate powers of the generator
+        let gen_pows = F::pow_2_generator_powers(log_n as u64).unwrap();
+
         let now = std::time::Instant::now();
-        let ntt = pol.ntt(gen);
+        let ntt = pol.ntt(&gen_pows);
         println!("NTT elapsed {:?}", now.elapsed());
+
         let now = std::time::Instant::now();
         let intt = ntt.intt();
         println!("INTT elapsed {:?}", now.elapsed());
+
         assert_eq!(pol, intt);
     }
 }

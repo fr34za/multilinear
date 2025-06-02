@@ -12,19 +12,22 @@ pub struct ProverData<F> {
 pub const LOG_BLOWUP: usize = 1;
 pub const NUM_QUERIES: usize = 128;
 
-// FIX add `gen_pows: &[F]` to `reed_solomon`
 pub fn reed_solomon<F: NttField>(mut coeffs: Vec<F>, gen_pows: &[F]) -> Vec<F> {
     // first, multiply the size of `coeffs` by a factor of `blowup` through adding zeros
     let n = coeffs.len();
     let blowup = 1 << LOG_BLOWUP;
     assert!(blowup > 1);
     coeffs.resize(blowup * n, F::from(0));
-    // compute the generator for the domain size
+
+    // compute the domain size
     let domain_size = coeffs.len();
-    let log_size = domain_size.trailing_zeros();
-    let gen = F::pow_2_generator(log_size as u64).unwrap();
+    assert!(
+        gen_pows.len() >= domain_size,
+        "Generator powers array must have at least domain_size elements"
+    );
+
     // use `ntt` to compute the Reed-Solomon encoding.
-    let lagrange = Polynomial { coeffs }.ntt(gen);
+    let lagrange = Polynomial { coeffs }.ntt(gen_pows);
     lagrange.evals
 }
 
@@ -77,7 +80,6 @@ impl<F: HashableField + NttField> ProverData<F> {
     }
 
     #[allow(clippy::needless_range_loop)]
-    // FIX use `gen_pows`, and add which step of the fold it is (call it `k` maybe)
     pub fn fold_step(&mut self, gen_pows: &[F], k: usize, transcript: &mut Transcript) {
         let last_data = self.commitments.last().unwrap().data.clone();
         let n = last_data.len() * 2;
@@ -89,7 +91,9 @@ impl<F: HashableField + NttField> ProverData<F> {
         let r = F::from_digest(&random_bytes);
         let half_n = n >> 1;
         let mut next_data = Vec::with_capacity(half_n);
-        let half = F::from(1) / F::from(2); // FIX move (F::from(1) / F::from(2)) outside the loop!
+
+        // Move half calculation outside the loop
+        let half = F::from(1) / F::from(2);
 
         for i in 0..half_n {
             // p(gen^i)
@@ -100,20 +104,21 @@ impl<F: HashableField + NttField> ProverData<F> {
 
             let even = (a + b) * half;
             // odd(x^2) = (p(x) - p(-x))/2x, where x = gen^i
-            // FIX gen_pow is gen_pows[i * (1 << k)]
-            // FIX the inverse of gen_pow is also a power!!
-            // FIX thus it is in fact `gen_pows[len - i * (1 << k)]` where len=gen_pows.len()
-            let gen_pow_index = i * (1 << k);
-            println!(
-                "gen_pow_index: {}, gen_pows.len(): {}",
-                gen_pow_index,
-                gen_pows.len()
-            );
-            let odd = (a - b) / (F::from(2) * gen_pows[gen_pows.len() - gen_pow_index]);
 
-            // p(x) + p(-x) == 2*even(x^2)
-            // FIX instead of multiplying both even and odd by `half` you can
-            // FIX multiply the sum `even + r * odd` by half
+            // Calculate gen_pow_index using gen_pows[len - i * (1 << k)]
+            let gen_pow_index = i * (1 << k);
+            let gen_pows_len = gen_pows.len();
+
+            // Ensure index is within bounds
+            assert!(
+                gen_pow_index < gen_pows_len,
+                "Generator power index out of bounds"
+            );
+
+            // Use gen_pows[len - i * (1 << k)] for the inverse
+            let odd = (a - b) / (F::from(2) * gen_pows[gen_pows_len - gen_pow_index - 1]);
+
+            // Apply half to the sum (even + r * odd) instead of individually
             next_data.push((even + r * odd) * half);
         }
 
@@ -137,14 +142,16 @@ impl<F: HashableField + NttField> ProverData<F> {
         transcript.append_message(b"merkle_root", root.as_slice());
     }
 
-    // FIX take `gen_pows`
     pub fn fold(gen: F, code: Vec<F>, transcript: &mut Transcript) -> Self {
         let mut prover_data = Self::init(&code, transcript);
-        let mut k = 0;
-        let gen_pows: Vec<F> = (0..code.len()).map(|i| gen.pow([i as u64])).collect();
 
+        // Generate gen_pows
+        let log_size = code.len().trailing_zeros() as u64;
+        let gen_pows = F::pow_2_generator_powers(log_size).unwrap();
+
+        let mut k = 0;
         while prover_data.last_element.is_none() {
-            // pass `k`, the power of the generator
+            // Pass gen_pows and k to fold_step
             prover_data.fold_step(&gen_pows, k, transcript);
             k += 1;
         }
@@ -352,14 +359,6 @@ mod tests {
     use crate::field::Field128;
     use bincode; // Ensure bincode is imported
 
-    // create a test for prove and verify!
-
-    // create a test for creating the proof for a big RS code (1 million field
-    // elements, or 16mb), serializes it and prints the size of the proof to
-    // serialize please use `Serde` and `Bincode`. You'll have to add derive
-    // instances for Serde in the proof datatype
-
-    // FIX
     #[test]
     fn prove_and_verify_test() {
         let log_n = 10;
@@ -369,7 +368,7 @@ mod tests {
 
         // Calculate gen_pows
         let gen = Field128::pow_2_generator(log_n as u64).unwrap();
-        let gen_pows: Vec<Field128> = (0..values.len()).map(|i| gen.pow([i as u64])).collect();
+        let gen_pows = Field128::pow_2_generator_powers(log_n as u64).unwrap();
 
         let code = reed_solomon(values, &gen_pows);
         let mut transcript = Transcript::new();
@@ -387,8 +386,7 @@ mod tests {
         let values: Vec<Field128> = (0..1 << 20).map(|i| Field128::from(i as i64)).collect();
 
         // Calculate gen_pows
-        let gen = Field128::pow_2_generator(20).unwrap();
-        let gen_pows: Vec<Field128> = (0..values.len()).map(|i| gen.pow([i as u64])).collect();
+        let gen_pows = Field128::pow_2_generator_powers(20).unwrap();
 
         let code = reed_solomon(values, &gen_pows);
         let mut transcript = Transcript::new();
