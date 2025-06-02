@@ -14,6 +14,19 @@ pub trait NttField: Field {
 
     fn pow_2_generator(log_size: u64) -> Option<Self>;
 
+    // 1, gen, gen^2, gen^3, ..., gen^(2^log_size - 1)
+    fn pow_2_generator_powers(log_size: u64) -> Option<Vec<Self>> {
+        let gen = Self::pow_2_generator(log_size)?;
+        let size = 1 << log_size;
+        let mut powers = Vec::with_capacity(size);
+        let mut current = Self::from(1);
+        for _ in 0..size {
+            powers.push(current);
+            current = current * gen;
+        }
+        Some(powers)
+    }
+
     fn pow<S: AsRef<[u64]>>(&self, exp: S) -> Self;
 }
 
@@ -48,7 +61,7 @@ impl NttField for Field128 {
     }
 }
 
-impl<F: Field> Polynomial<F> {
+impl<F: NttField> Polynomial<F> {
     pub fn evaluate(&self, x: F) -> F {
         self.coeffs
             .iter()
@@ -67,19 +80,22 @@ impl<F: Field> Polynomial<F> {
 
         bit_reverse_permutation(&mut values);
 
-        let mut len = 2;
+        // unroll the first step
+        for i in (0..n).step_by(2) {
+            let u = values[i];
+            let v = values[i + 1];
+            values[i] = u + v;
+            values[i + 1] = u - v;
+        }
+        let mut len = 4;
         while len <= n {
-            let mut wlen = gen;
-            for _ in 0..(n / len).trailing_zeros() {
-                wlen = wlen * wlen;
-            }
-
+            let wlen = gen.pow([(n / len) as u64]);
             for i in (0..n).step_by(len) {
                 let mut w = F::from(1);
                 for j in 0..len / 2 {
-                    let u = values[i + j];
                     let v = values[i + j + len / 2] * w;
                     w *= wlen;
+                    let u = values[i + j];
                     values[i + j] = u + v;
                     values[i + j + len / 2] = u - v;
                 }
@@ -109,7 +125,7 @@ pub struct LagrangePolynomial<F> {
     pub evals: Vec<F>,
 }
 
-impl<F: Field> LagrangePolynomial<F> {
+impl<F: NttField> LagrangePolynomial<F> {
     pub fn intt(&self) -> Polynomial<F> {
         let n = self.evals.len();
         assert!(n.is_power_of_two());
@@ -119,13 +135,16 @@ impl<F: Field> LagrangePolynomial<F> {
         bit_reverse_permutation(&mut values);
 
         let gen_inv = F::from(1) / self.gen;
-        let mut len = 2;
+        // unroll the first step
+        for i in (0..n).step_by(2) {
+            let u = values[i];
+            let v = values[i + 1];
+            values[i] = u + v;
+            values[i + 1] = u - v;
+        }
+        let mut len = 4;
         while len <= n {
-            let mut wlen = gen_inv;
-            for _ in 0..(n / len).trailing_zeros() {
-                wlen = wlen * wlen;
-            }
-
+            let wlen = gen_inv.pow([(n / len) as u64]);
             for i in (0..n).step_by(len) {
                 let mut w = F::from(1);
                 for j in 0..len / 2 {
