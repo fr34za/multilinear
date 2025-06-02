@@ -1,4 +1,4 @@
-use ark_ff::Field as ArkField;
+use winterfell::math::FieldElement;
 
 use crate::field::{Field, Field128};
 
@@ -27,7 +27,7 @@ pub trait NttField: Field {
         Some(powers)
     }
 
-    fn pow<S: AsRef<[u64]>>(&self, exp: S) -> Self;
+    fn pow(&self, exp: u128) -> Self;
 }
 
 impl NttField for Field128 {
@@ -50,14 +50,11 @@ impl NttField for Field128 {
         let size = 1u128 << log_size;
         let exp = modulus_minus_1 / size;
 
-        let exp_low = exp as u64;
-        let exp_high = (exp >> 64) as u64;
-
-        Some(Self::generator().pow([exp_low, exp_high]))
+        Some(Self::generator().pow(exp))
     }
 
-    fn pow<S: AsRef<[u64]>>(&self, exp: S) -> Self {
-        Field128(self.0.pow(exp))
+    fn pow(&self, exp: u128) -> Self {
+        Field128(self.0.exp(exp))
     }
 }
 
@@ -89,7 +86,7 @@ impl<F: NttField> Polynomial<F> {
         }
         let mut len = 4;
         while len <= n {
-            let wlen = gen.pow([(n / len) as u64]);
+            let wlen = gen.pow((n / len) as u128);
             for i in (0..n).step_by(len) {
                 let mut w = F::from(1);
                 for j in 0..len / 2 {
@@ -144,7 +141,7 @@ impl<F: NttField> LagrangePolynomial<F> {
         }
         let mut len = 4;
         while len <= n {
-            let wlen = gen_inv.pow([(n / len) as u64]);
+            let wlen = gen_inv.pow((n / len) as u128);
             for i in (0..n).step_by(len) {
                 let mut w = F::from(1);
                 for j in 0..len / 2 {

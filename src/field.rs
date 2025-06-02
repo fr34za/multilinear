@@ -4,9 +4,9 @@ use std::{
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
-use ark_ff::{Fp128, MontBackend, MontConfig};
 use serde::de::Error as DeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use winterfell::math::fields::f128::BaseElement;
 
 pub trait Field = Add<Output = Self>
     + AddAssign
@@ -27,22 +27,13 @@ pub trait Field = Add<Output = Self>
     + Debug
     + Eq;
 
-#[derive(MontConfig)]
-#[modulus = "340282366920938463463374557953744961537"]
-#[generator = "3"]
-pub struct FrConfig128;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Field128(pub Fp128<MontBackend<FrConfig128, 2>>);
+pub struct Field128(pub BaseElement);
 
 impl AsRef<[u8]> for Field128 {
     fn as_ref(&self) -> &[u8] {
-        let data = &self.0 .0 .0;
-        unsafe {
-            std::slice::from_raw_parts(
-                data.as_ptr() as *const u8,
-                data.len() * std::mem::size_of::<u64>(),
-            )
-        }
+        let ptr = self as *const Field128;
+        unsafe { std::slice::from_raw_parts(ptr as *const u8, std::mem::size_of::<u128>()) }
     }
 }
 
@@ -68,7 +59,7 @@ impl<'de> Deserialize<'de> for Field128 {
         let mut array = [0u8; 16];
         array.copy_from_slice(bytes);
         let value = u128::from_le_bytes(array);
-        Ok(Field128(Fp128::from(value)))
+        Ok(Field128(BaseElement::new(value)))
     }
 }
 
@@ -134,31 +125,31 @@ impl DivAssign for Field128 {
 
 impl Sum for Field128 {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(Field128(Fp128::from(0)), |a, b| a + b)
+        iter.fold(Field128(BaseElement::from(0u32)), |a, b| a + b)
     }
 }
 
 impl Product for Field128 {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(Field128(Fp128::from(1)), |a, b| a * b)
+        iter.fold(Field128(BaseElement::from(1u32)), |a, b| a * b)
     }
 }
 
 impl From<u128> for Field128 {
     fn from(val: u128) -> Self {
-        Field128(Fp128::from(val))
+        Field128(BaseElement::new(val))
     }
 }
 
 impl From<i32> for Field128 {
     fn from(val: i32) -> Self {
-        Field128(Fp128::from(val))
+        Field128(BaseElement::new(val as u128))
     }
 }
 
 impl From<i64> for Field128 {
     fn from(val: i64) -> Self {
-        Field128(Fp128::from(val))
+        Field128(BaseElement::new(val as u128))
     }
 }
 

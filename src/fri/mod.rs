@@ -208,7 +208,7 @@ impl<F: HashableField + NttField> QueryProof<F> {
 
             let value = path.value.value; // p(g^i)
             let minus_value = path.value.minus_value; // p(-g^i)
-            let current_gen_pow = current_gen.pow([current_index as u64]); // g^i
+            let current_gen_pow = current_gen.pow(current_index as u128); // g^i
             let even = (value + minus_value) / F::from(2);
             let odd = (value - minus_value) / (F::from(2) * current_gen_pow);
 
