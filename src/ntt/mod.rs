@@ -167,8 +167,7 @@ impl<F: NttField> LagrangePolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::Field128 as F;
-    use std::hint::black_box;
+    use crate::{benchmark, field::Field128 as F};
 
     #[test]
     fn ntt_benchmark_test() {
@@ -177,9 +176,7 @@ mod tests {
         let coeffs = (0..n).map(F::from).collect();
         let pol = Polynomial::<F> { coeffs };
         let gen = F::pow_2_generator(log_n).unwrap();
-        let now = std::time::Instant::now();
-        black_box(pol.ntt(gen));
-        println!("NTT elapsed {:?}", now.elapsed());
+        benchmark!("NTT ", pol.ntt(gen));
     }
 
     #[test]
@@ -189,12 +186,8 @@ mod tests {
         let coeffs = (0..n).map(|i| F::from(i as i64)).collect();
         let pol = Polynomial::<F> { coeffs };
         let gen = F::pow_2_generator(log_n as u64).unwrap();
-        let now = std::time::Instant::now();
-        let ntt = pol.ntt(gen);
-        println!("NTT elapsed {:?}", now.elapsed());
-        let now = std::time::Instant::now();
-        let intt = ntt.intt();
-        println!("INTT elapsed {:?}", now.elapsed());
+        let ntt = benchmark!("NTT ", pol.ntt(gen));
+        let intt = benchmark!("INTT ", ntt.intt());
         assert_eq!(pol, intt);
     }
 }

@@ -331,10 +331,8 @@ impl<F: HashableField + NttField> FriProof<F> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
-
     use super::*;
-    use crate::field::Field128;
+    use crate::{benchmark, field::Field128};
     use bincode; // Ensure bincode is imported
 
     #[test]
@@ -363,21 +361,20 @@ mod tests {
         let values: Vec<Field128> = (0..1 << 20).map(|i| Field128::from(i as i64)).collect();
 
         // Calculate gen_pows
-        let now = Instant::now();
-        let gen_pows = Field128::pow_2_generator_powers(20 + LOG_BLOWUP as u64).unwrap();
-        println!("Generator powers time: {:?}", now.elapsed());
-
-        let now = Instant::now();
-        let code = reed_solomon(values, gen_pows[1]);
-        println!("Reed solomon encoding time: {:?}", now.elapsed());
+        let gen_pows = benchmark!(
+            "Generator powers time: ",
+            Field128::pow_2_generator_powers(20 + LOG_BLOWUP as u64).unwrap()
+        );
+        let code = benchmark!(
+            "Reed solomon encoding time: ",
+            reed_solomon(values, gen_pows[1])
+        );
         let mut transcript = Transcript::new();
-        let now = Instant::now();
-        let proof = FriProof::prove(&code, &gen_pows, &mut transcript);
-        println!("Proof time: {:?}", now.elapsed());
-
-        let now = Instant::now();
-        proof.verify().unwrap();
-        println!("Verify time: {:?}", now.elapsed());
+        let proof = benchmark!(
+            "Proof time: ",
+            FriProof::prove(&code, &gen_pows, &mut transcript)
+        );
+        benchmark!("Verify time: ", proof.verify().unwrap());
         // Serialize the proof using Serde and Bincode
         let serialized_proof =
             bincode::serde::encode_to_vec(&proof, config).expect("Serialization failed");

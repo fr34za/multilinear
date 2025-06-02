@@ -238,13 +238,15 @@ impl<F: std::fmt::Debug> std::fmt::Debug for SumcheckPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constraint_system::{
-        constraints::{ConstraintSet, Expr},
-        system::WitnessLayout,
-        trace::Trace,
-    };
     use crate::field::Field128 as F;
-    use std::time::Instant;
+    use crate::{
+        benchmark,
+        constraint_system::{
+            constraints::{ConstraintSet, Expr},
+            system::WitnessLayout,
+            trace::Trace,
+        },
+    };
 
     fn pythagorean_trace<F: Field>() -> Trace<F> {
         let f = F::from;
@@ -326,17 +328,14 @@ mod tests {
         let prover = System::<F>::prover(transcript, set, layout, trace);
         let verifier_transcript = &mut transcript.clone();
         let sum = F::from(0);
-
-        let now = Instant::now();
-        let tables = &mut prover.build_tables();
-        println!("  - Table generation took {:?}", now.elapsed());
-
-        let now = Instant::now();
-        let pols = prover.compute_sumcheck_polynomials(transcript, tables, sum);
-        println!("  - Proof took {:?}", now.elapsed());
-
-        let now = Instant::now();
-        prover.verify_sumcheck_debug(verifier_transcript, &pols, sum);
-        println!("  - Verification took {:?}", now.elapsed());
+        let tables = &mut benchmark!("  - Table generation: ", prover.build_tables());
+        let pols = benchmark!(
+            "  - Proof: ",
+            prover.compute_sumcheck_polynomials(transcript, tables, sum)
+        );
+        benchmark!(
+            "  - Verification: ",
+            prover.verify_sumcheck_debug(verifier_transcript, &pols, sum)
+        );
     }
 }

@@ -6,3 +6,13 @@ pub mod merkle_tree;
 pub mod ntt;
 pub mod polynomials;
 pub mod transcript;
+
+#[macro_export]
+macro_rules! benchmark {
+    ($msg:expr, $expr:expr) => {{
+        let now = std::time::Instant::now();
+        let result = std::hint::black_box($expr);
+        println!("{}{:?}", $msg, now.elapsed());
+        result
+    }};
+}
