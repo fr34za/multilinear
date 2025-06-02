@@ -22,7 +22,7 @@ pub trait NttField: Field {
         let mut current = Self::from(1);
         for _ in 0..size {
             powers.push(current);
-            current = current * gen;
+            current *= gen;
         }
         Some(powers)
     }

@@ -104,12 +104,15 @@ impl<F: HashableField> SumcheckTables<F> {
         let total_degree = composition_degree + 1;
         let n_rounds = self.height.trailing_zeros();
         for _ in 0..n_rounds {
-            pols.push(self.compute_sumcheck_polynomial(
-                composition,
-                total_degree,
-                &mut previous_sum,
-                transcript,
-            ))
+            pols.push(
+                self.compute_sumcheck_polynomial(
+                    composition,
+                    total_degree,
+                    &mut previous_sum,
+                    transcript,
+                )
+                .0,
+            )
         }
         pols.into()
     }
@@ -120,7 +123,7 @@ impl<F: HashableField> SumcheckTables<F> {
         total_degree: usize,
         previous_sum: &mut F,
         transcript: &mut Transcript,
-    ) -> SumcheckPolynomial<F> {
+    ) -> (SumcheckPolynomial<F>, F) {
         let mut evals = vec![F::from(0); total_degree + 1];
         // you need `total_degree + 1` points to compute the
         // partial sum polynomial. But the first point can be
@@ -141,7 +144,7 @@ impl<F: HashableField> SumcheckTables<F> {
         let r = transcript.next_challenge();
         *previous_sum = pol.evaluate(r);
         self.fold(r);
-        sumcheck_pol
+        (sumcheck_pol, r)
     }
 
     pub fn partial_sum(&self, composition: &impl Fn(&[F]) -> F, r: F) -> F {

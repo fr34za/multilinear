@@ -20,11 +20,6 @@ impl Transcript {
         }
     }
 
-    pub fn append_message(&mut self, label: &[u8], message: &[u8]) {
-        self.state.update(label);
-        self.state.update(message);
-    }
-
     pub fn random(&self) -> [u8; 32] {
         let cloned_state = self.state.clone();
         let result = cloned_state.finalize();

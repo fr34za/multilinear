@@ -59,12 +59,12 @@ impl<F: HashableField + NttField> ProverData<F> {
         );
         // commit to a `Merkle` tree using `to_bytes` method.
         let mut commitments = Vec::new();
-        let merkle = commit_rs_code(&code);
+        let merkle = commit_rs_code(code);
         let root = merkle.root();
         // add to `commitments`.
         commitments.push(merkle);
         // Use the `root()` to update the transcript
-        transcript.append_message(b"merkle_root", root.as_slice());
+        transcript.absorb(root.as_slice());
         Self {
             commitments,
             last_element: None,
@@ -72,15 +72,13 @@ impl<F: HashableField + NttField> ProverData<F> {
     }
 
     #[allow(clippy::needless_range_loop)]
-    pub fn fold_step(&mut self, gen_pows: &[F], k: usize, transcript: &mut Transcript) {
+    pub fn fold_step(&mut self, gen_pows: &[F], k: usize, r: F, transcript: &mut Transcript) {
         let last_data = self.commitments.last().unwrap().data.clone();
         let n = last_data.len() * 2;
         let blowup = 1 << LOG_BLOWUP;
         if n <= blowup {
             return;
         }
-        let random_bytes = transcript.random();
-        let r = F::from_digest(&random_bytes);
         let half_n = n >> 1;
         let mut next_data = Vec::with_capacity(half_n);
 
@@ -119,7 +117,7 @@ impl<F: HashableField + NttField> ProverData<F> {
                 "not an RS code"
             );
             self.last_element = Some(first);
-            transcript.append_message(b"last_element", first.as_ref());
+            transcript.absorb(first.as_ref());
             return;
         }
         // `commit` to Merkle, etc
@@ -128,18 +126,17 @@ impl<F: HashableField + NttField> ProverData<F> {
         self.commitments.push(merkle);
 
         // Use the `root()` to update the transcript
-        transcript.append_message(b"merkle_root", root.as_slice());
+        transcript.absorb(root.as_slice());
     }
 
     pub fn fold(gen_pows: &[F], code: &[F], transcript: &mut Transcript) -> Self {
-        let mut prover_data = Self::init(&code, transcript);
-
-        let mut k = 0;
-        while prover_data.last_element.is_none() {
-            // Pass gen_pows and k to fold_step
-            prover_data.fold_step(&gen_pows, k, transcript);
-            k += 1;
+        let mut prover_data = Self::init(code, transcript);
+        let num_steps = code.len().trailing_zeros() as usize - LOG_BLOWUP;
+        for k in 0..num_steps {
+            let r = transcript.next_challenge();
+            prover_data.fold_step(gen_pows, k, r, transcript);
         }
+        assert!(prover_data.last_element.is_some());
         prover_data
     }
 
@@ -197,7 +194,7 @@ impl<F: HashableField + NttField> QueryProof<F> {
         let random_u64 = u64::from_le_bytes(transcript.random()[..8].try_into().unwrap());
         // the index is half of the domain size because the merkle tree takes pairs of elements
         let random_index = random_u64 as usize % n;
-        transcript.append_message(b"query_index", &random_index.to_le_bytes());
+        transcript.absorb(&random_index.to_le_bytes());
 
         let mut current_n = n;
         let mut current_index = random_index;
@@ -267,7 +264,7 @@ impl<F: HashableField + NttField> FriProof<F> {
         // get the generator for length = blowup * message.len
         let domain_size = code.len();
         // call `fold`
-        let prover_data = ProverData::fold(gen_pows, &code, transcript);
+        let prover_data = ProverData::fold(gen_pows, code, transcript);
         // for `0..NUM_QUERIES` generate random index between `0..domain_size/2`
         let mut queries = Vec::with_capacity(NUM_QUERIES);
         for _ in 0..NUM_QUERIES {
@@ -278,7 +275,7 @@ impl<F: HashableField + NttField> FriProof<F> {
             let query_proof = prover_data.open_query_at(random_index);
             queries.push(query_proof);
             // use the `index` to update the transcript
-            transcript.append_message(b"query_index", &random_index.to_le_bytes());
+            transcript.absorb(&random_index.to_le_bytes());
         }
         // at the end create the FriProof using the queries, last_elem and the
         FriProof {
@@ -303,13 +300,12 @@ impl<F: HashableField + NttField> FriProof<F> {
         let mut random_elements = Vec::new();
         // Simulate the "fold" stage
         for root in self.commitments.iter() {
-            transcript.append_message(b"merkle_root", root.as_slice());
-            let random_bytes = transcript.random();
-            let random_element = F::from_digest(&random_bytes);
-            random_elements.push(random_element);
+            transcript.absorb(root.as_slice());
+            let r: F = transcript.next_challenge();
+            random_elements.push(r);
         }
         // Last fold step
-        transcript.append_message(b"last_element", self.last_elem.as_ref());
+        transcript.absorb(self.last_elem.as_ref());
 
         let log_domain_size = self.commitments.len() + LOG_BLOWUP;
         let domain_size = 1 << log_domain_size;
