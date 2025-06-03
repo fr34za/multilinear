@@ -3,7 +3,7 @@ use crate::ntt::{NttField, Polynomial};
 use crate::transcript::{HashableField, Transcript};
 use serde::{Deserialize, Serialize};
 
-pub struct ProverData<F> {
+pub struct FriProverData<F> {
     // Now using Merkle<ReedSolomonPair<F>>
     pub commitments: Vec<Merkle<ReedSolomonPair<F>>>,
     pub last_element: Option<F>,
@@ -50,7 +50,7 @@ fn commit_rs_code<F: HashableField>(code: &[F]) -> Merkle<ReedSolomonPair<F>> {
     Merkle::commit(pairs)
 }
 
-impl<F: HashableField + NttField> ProverData<F> {
+impl<F: HashableField + NttField> FriProverData<F> {
     pub fn init(code: &[F], transcript: &mut Transcript) -> Self {
         // `values` must be power of two.
         assert!(
@@ -264,7 +264,7 @@ impl<F: HashableField + NttField> FriProof<F> {
         // get the generator for length = blowup * message.len
         let domain_size = code.len();
         // call `fold`
-        let prover_data = ProverData::fold(gen_pows, code, transcript);
+        let prover_data = FriProverData::fold(gen_pows, code, transcript);
         // for `0..NUM_QUERIES` generate random index between `0..domain_size/2`
         let mut queries = Vec::with_capacity(NUM_QUERIES);
         for _ in 0..NUM_QUERIES {
