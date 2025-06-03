@@ -239,7 +239,7 @@ impl<F: HashableField + NttField> QueryProof<F> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FriProof<F: HashableField + NttField> {
+pub struct FriProof<F> {
     // there are N commitments, where N is the log2 of the message size (the polynomial)
     pub commitments: Vec<HashDigest>,
     // there are `NUM_QUERIES` number of query proofs

@@ -86,12 +86,18 @@ impl<F: NttField> Polynomial<F> {
         }
         let mut len = 4;
         while len <= n {
-            let wlen = gen.pow((n / len) as u128);
+            let current_gen = gen.pow((n / len) as u128);
+            let mut acc = F::from(1);
+            let gen_pows: Vec<_> = (0..len / 2)
+                .map(|_| {
+                    let res = acc;
+                    acc *= current_gen;
+                    res
+                })
+                .collect();
             for i in (0..n).step_by(len) {
-                let mut w = F::from(1);
                 for j in 0..len / 2 {
-                    let v = values[i + j + len / 2] * w;
-                    w *= wlen;
+                    let v = values[i + j + len / 2] * gen_pows[j];
                     let u = values[i + j];
                     values[i + j] = u + v;
                     values[i + j + len / 2] = u - v;
@@ -141,13 +147,19 @@ impl<F: NttField> LagrangePolynomial<F> {
         }
         let mut len = 4;
         while len <= n {
-            let wlen = gen_inv.pow((n / len) as u128);
+            let current_gen = gen_inv.pow((n / len) as u128);
+            let mut acc = F::from(1);
+            let gen_pows: Vec<_> = (0..len / 2)
+                .map(|_| {
+                    let res = acc;
+                    acc *= current_gen;
+                    res
+                })
+                .collect();
             for i in (0..n).step_by(len) {
-                let mut w = F::from(1);
                 for j in 0..len / 2 {
                     let u = values[i + j];
-                    let v = values[i + j + len / 2] * w;
-                    w *= wlen;
+                    let v = values[i + j + len / 2] * gen_pows[j];
                     values[i + j] = u + v;
                     values[i + j + len / 2] = u - v;
                 }
