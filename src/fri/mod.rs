@@ -1,3 +1,5 @@
+pub mod multilinear_pcs;
+
 use crate::merkle_tree::{HashDigest, Merkle, MerkleInclusionPath, MerkleInclusionPathError};
 use crate::ntt::{NttField, Polynomial};
 use crate::transcript::{HashableField, Transcript};
