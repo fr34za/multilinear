@@ -3,7 +3,7 @@
 use super::{evaluation::Mask, system::System};
 use crate::{
     field::Field,
-    polynomials::{Polynomial, PolynomialEvals},
+    polynomials::{MultilinearPolynomialEvals, Polynomial, PolynomialEvals},
     transcript::{HashableField, Transcript},
 };
 
@@ -90,6 +90,25 @@ impl<F: HashableField> System<F> {
 }
 
 impl<F: HashableField> SumcheckTables<F> {
+    pub fn build_tables_for_pcs(inputs: &[F], poly: &MultilinearPolynomialEvals<F>) -> Self {
+        let n_vars = inputs.len();
+        let height = poly.evals.len();
+        assert_eq!(1 << n_vars, height);
+        let trace = poly.evals.clone();
+        let delta = (0..trace.len())
+            .map(|index| {
+                let mask = Mask { index, n_vars };
+                mask.evaluate(inputs)
+            })
+            .collect::<Vec<_>>();
+        Self {
+            matrix: trace.into(),
+            width: 1,
+            height,
+            delta: delta.into(),
+        }
+    }
+
     pub fn compute_sumcheck_polynomials(
         &mut self,
         composition: &impl Fn(&[F]) -> F,

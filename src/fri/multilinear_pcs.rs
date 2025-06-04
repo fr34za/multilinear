@@ -11,7 +11,7 @@ use crate::{
     transcript::{HashableField, Transcript},
 };
 
-use super::{FriProof, FriProverData};
+use super::{FriProof, FriProverData, NUM_QUERIES};
 
 pub struct PCSProverData<F> {
     // FRI data
@@ -23,40 +23,14 @@ pub struct PCSProverData<F> {
 
 impl<F: HashableField + NttField> PCSProverData<F> {
     pub fn init(
-        _inputs: &[F],
-        _output: F,
+        inputs: &[F],
         poly: &MultilinearPolynomialEvals<F>,
         code: &[F],
         transcript: &mut Transcript,
     ) -> Self {
         // call `FriProverData::init`
         let fri_data = FriProverData::init(code, transcript);
-
-        // Create a simple constraint system for PCS
-        // This is a placeholder implementation - in a real system, you would
-        // create appropriate constraints based on your specific needs
-        let expr = Expr(|var, _| var[0]);
-        let constraints = [expr].into();
-        let degree = 1;
-        let constraint_set = ConstraintSet::new(constraints, degree);
-
-        // Create a simple trace from the polynomial
-        let width = 1; // Just using one column for simplicity
-        let _height = poly.evals.len();
-        let matrix = poly.evals.clone().into_boxed_slice();
-        let trace = Trace::new(matrix, width);
-
-        // Create a simple layout
-        let layout = WitnessLayout {
-            columns: width,
-            randoms: 0,
-            sum_columns: [].into(),
-            pre_random_columns: 0,
-        };
-
-        // Create the system and build tables
-        let system = System::prover(transcript, constraint_set, layout, trace);
-        let sumcheck_tables = system.build_tables();
+        let sumcheck_tables = SumcheckTables::build_tables_for_pcs(inputs, poly);
 
         // sumcheck_polynomials start empty
         let sumcheck_polynomials = Vec::new();
@@ -76,16 +50,15 @@ impl<F: HashableField + NttField> PCSProverData<F> {
         code: &[F],
         transcript: &mut Transcript,
     ) -> Self {
-        let mut prover_data = Self::init(inputs, output, poly, code, transcript);
+        let mut prover_data = Self::init(inputs, poly, code, transcript);
         let num_steps = code.len().trailing_zeros() as usize - LOG_BLOWUP;
 
         let mut previous_sum = output;
+        // Define the composition function
+        let composition = &|x: &[F]| x[0];
+        let total_degree = 1;
 
         for k in 0..num_steps {
-            // Define the composition function
-            let composition = &|x: &[F]| x[0];
-            let total_degree = 1;
-
             // Compute the sumcheck polynomial
             // This returns a tuple (SumcheckPolynomial, F)
             let (sumcheck_poly, r) = prover_data.sumcheck_tables.compute_sumcheck_polynomial(
@@ -127,27 +100,35 @@ impl<F: HashableField + NttField> PCSProof<F> {
         // First, convert the polynomial to canonical form
         let coeffs = poly.to_coefficient();
 
-        // Then compute the RS code of the canonical coefficients
-        let log_size = coeffs.coeffs.len().trailing_zeros() as u64;
-        let gen = F::pow_2_generator(log_size).unwrap();
-
         // Compute gen_pows for the RS code
-        let log_domain_size = log_size + LOG_BLOWUP as u64;
+        let log_domain_size = coeffs.coeffs.len().trailing_zeros() as u64 + LOG_BLOWUP as u64;
         let gen_pows = F::pow_2_generator_powers(log_domain_size).unwrap();
+        let gen = gen_pows[1];
 
-        // Convert coefficients to a vector
-        let coeffs_vec = coeffs.coeffs;
-
-        // Compute the Reed-Solomon code
-        let code = super::reed_solomon(coeffs_vec.to_vec(), gen);
+        // Then compute the RS code of the canonical coefficients
+        let code = super::reed_solomon(coeffs.coeffs, gen);
 
         // Run the PCS fold, using the polynomial, code, gen_pows
         let prover_data = PCSProverData::fold(&inputs, output, &poly, &gen_pows, &code, transcript);
 
         // Do the queries, similar to FRI
-        let fri_proof = FriProof::prove(&code, &gen_pows, transcript);
+        let domain_size = 1 << log_domain_size;
+        let mut queries = Vec::with_capacity(NUM_QUERIES);
+        for _ in 0..NUM_QUERIES {
+            let random_u64 = u64::from_le_bytes(transcript.random()[..8].try_into().unwrap());
+            let random_index = random_u64 as usize % (domain_size / 2);
+            let query_proof = prover_data.fri_data.open_query_at(random_index);
+            queries.push(query_proof);
+            transcript.absorb(&random_index.to_le_bytes());
+        }
 
         // Construct the PCSProof
+        let fri_proof = FriProof {
+            commitments: prover_data.fri_data.fold_roots(),
+            queries,
+            last_elem: prover_data.fri_data.last_element.unwrap(),
+            last_random: transcript.random(),
+        };
         PCSProof {
             fri_proof,
             sumcheck_polynomials: prover_data.sumcheck_polynomials,
@@ -157,21 +138,22 @@ impl<F: HashableField + NttField> PCSProof<F> {
     }
 
     pub fn verify(&self, transcript: &mut Transcript) -> Result<(), super::FriProofError> {
-        // First, verify all sumcheck polynomials
-        let mut previous_sum = self.output;
+        // // First, verify all sumcheck polynomials
+        // let mut previous_sum = self.output;
 
-        for poly in &self.sumcheck_polynomials {
-            // Convert the sumcheck polynomial to a regular polynomial
-            let polynomial = poly.to_polynomial(previous_sum);
+        // for poly in &self.sumcheck_polynomials {
+        //     // Convert the sumcheck polynomial to a regular polynomial
+        //     let polynomial = poly.to_polynomial(previous_sum);
 
-            // Get the next challenge from the transcript
-            let r = transcript.next_challenge();
+        //     // Get the next challenge from the transcript
+        //     let r = transcript.next_challenge();
 
-            // Update the previous sum for the next iteration
-            previous_sum = polynomial.evaluate(r);
-        }
+        //     // Update the previous sum for the next iteration
+        //     previous_sum = polynomial.evaluate(r);
+        // }
 
-        // Finally, verify the FRI proof
-        self.fri_proof.verify()
+        // // Finally, verify the FRI proof
+        // self.fri_proof.verify()
+        todo!()
     }
 }
