@@ -11,7 +11,7 @@ use crate::{
     transcript::{HashableField, Transcript},
 };
 
-use super::{FriProof, FriProverData, NUM_QUERIES};
+use super::{FriProof, FriProofError, FriProverData, NUM_QUERIES};
 
 pub struct PCSProverData<F> {
     // FRI data
@@ -138,22 +138,45 @@ impl<F: HashableField + NttField> PCSProof<F> {
     }
 
     pub fn verify(&self, transcript: &mut Transcript) -> Result<(), super::FriProofError> {
-        // // First, verify all sumcheck polynomials
-        // let mut previous_sum = self.output;
+        // Check if the number of queries is correct
+        if self.fri_proof.queries.len() != NUM_QUERIES {
+            return Err(FriProofError::WrongNumberOfQueries);
+        }
 
-        // for poly in &self.sumcheck_polynomials {
-        //     // Convert the sumcheck polynomial to a regular polynomial
-        //     let polynomial = poly.to_polynomial(previous_sum);
+        // First, absorb the merkle_roots into the transcript
+        // This simulates the "fold" phase of FRI
+        let mut random_elements = Vec::new();
+        for root in self.fri_proof.commitments.iter() {
+            transcript.absorb(root.as_slice());
+            let r: F = transcript.next_challenge();
+            random_elements.push(r);
+        }
 
-        //     // Get the next challenge from the transcript
-        //     let r = transcript.next_challenge();
+        // Verify all sumcheck polynomials
+        // This mimics the fold loop, but for verification
+        let mut previous_sum = self.output;
 
-        //     // Update the previous sum for the next iteration
-        //     previous_sum = polynomial.evaluate(r);
-        // }
+        for poly in &self.sumcheck_polynomials {
+            // Absorb the polynomial coefficients into the transcript
+            // This is similar to what happens in compute_sumcheck_polynomial
+            for coeff in poly.nonzero_coeffs.iter() {
+                transcript.absorb(coeff.as_ref());
+            }
 
-        // // Finally, verify the FRI proof
-        // self.fri_proof.verify()
-        todo!()
+            // Convert the sumcheck polynomial to a regular polynomial
+            let polynomial = poly.to_polynomial(previous_sum);
+
+            // Get the next challenge from the transcript
+            let r = transcript.next_challenge();
+
+            // Update the previous sum for the next iteration
+            previous_sum = polynomial.evaluate(r);
+        }
+
+        // Absorb the last element into the transcript
+        transcript.absorb(self.fri_proof.last_elem.as_ref());
+
+        // Finally, verify the FRI queries
+        self.fri_proof.verify_queries(transcript, &random_elements)
     }
 }

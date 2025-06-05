@@ -15,7 +15,7 @@ pub struct SumcheckTables<F> {
 }
 
 pub struct SumcheckPolynomial<F> {
-    nonzero_coeffs: Box<[F]>,
+    pub nonzero_coeffs: Box<[F]>,
 }
 
 impl<F: HashableField> System<F> {
