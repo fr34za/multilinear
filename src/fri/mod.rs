@@ -1,3 +1,4 @@
+pub mod batched_fri;
 pub mod multilinear_pcs;
 
 use crate::merkle_tree::{HashDigest, Merkle, MerkleInclusionPath, MerkleInclusionPathError};
@@ -7,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 pub struct FriProverData<F> {
     // Now using Merkle<ReedSolomonPair<F>>
-    pub commitments: Vec<Merkle<ReedSolomonPair<F>>>,
+    pub merkle_trees: Vec<Merkle<ReedSolomonPair<F>>>,
     pub last_element: Option<F>,
 }
 
@@ -60,22 +61,22 @@ impl<F: HashableField + NttField> FriProverData<F> {
             "Input size must be a power of two"
         );
         // commit to a `Merkle` tree using `to_bytes` method.
-        let mut commitments = Vec::new();
-        let merkle = commit_rs_code(code);
-        let root = merkle.root();
+        let mut merkle_trees = Vec::new();
+        let merkle_tree = commit_rs_code(code);
+        let root = merkle_tree.root();
         // add to `commitments`.
-        commitments.push(merkle);
+        merkle_trees.push(merkle_tree);
         // Use the `root()` to update the transcript
         transcript.absorb(root.as_slice());
         Self {
-            commitments,
+            merkle_trees,
             last_element: None,
         }
     }
 
     #[allow(clippy::needless_range_loop)]
     pub fn fold_step(&mut self, gen_pows: &[F], k: usize, r: F, transcript: &mut Transcript) {
-        let last_data = self.commitments.last().unwrap().data.clone();
+        let last_data = self.merkle_trees.last().unwrap().data.clone();
         let n = last_data.len() * 2;
         let blowup = 1 << LOG_BLOWUP;
         if n <= blowup {
@@ -125,7 +126,7 @@ impl<F: HashableField + NttField> FriProverData<F> {
         // `commit` to Merkle, etc
         let merkle = commit_rs_code(&next_data);
         let root = merkle.root();
-        self.commitments.push(merkle);
+        self.merkle_trees.push(merkle);
 
         // Use the `root()` to update the transcript
         transcript.absorb(root.as_slice());
@@ -143,21 +144,21 @@ impl<F: HashableField + NttField> FriProverData<F> {
     }
 
     pub fn fold_roots(&self) -> Vec<HashDigest> {
-        self.commitments
+        self.merkle_trees
             .iter()
             .map(|merkle| merkle.root())
             .collect()
     }
 
     pub fn open_query_at(&self, index: usize) -> QueryProof<F> {
-        let n = self.commitments[0].data.len();
+        let n = self.merkle_trees[0].data.len();
         assert!(index < n);
 
         let mut paths = Vec::new();
         let mut current_index = index;
         let mut current_n = n;
 
-        for merkle in &self.commitments {
+        for merkle in &self.merkle_trees {
             // Open only once, as it opens both elements
             let path = merkle.open(current_index).expect("Index out of bounds");
 

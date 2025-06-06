@@ -23,32 +23,7 @@ pub struct MerkleInclusionPath<T> {
     pub path: Vec<(HashDigest, Direction)>,
 }
 
-impl<T> Merkle<T>
-where
-    T: AsRef<[u8]>,
-{
-    pub fn commit(data: Vec<T>) -> Self {
-        assert!(
-            data.len().is_power_of_two(),
-            "Data length must be a power of two"
-        );
-
-        let first_layer: Vec<HashDigest> = data.iter().map(|item| hash_leaf(item)).collect();
-
-        let mut layers: Vec<Vec<HashDigest>> = vec![first_layer];
-
-        while layers.last().unwrap().len() > 1 {
-            let current_layer = layers.last().unwrap();
-            let next_layer: Vec<HashDigest> = current_layer
-                .chunks(2)
-                .map(|pair| hash_node(&pair[0], &pair[1]))
-                .collect();
-            layers.push(next_layer);
-        }
-
-        Merkle { layers, data }
-    }
-
+impl<T> Merkle<T> {
     pub fn root(&self) -> HashDigest {
         self.layers.last().unwrap()[0]
     }
@@ -80,6 +55,42 @@ where
         }
 
         Some(MerkleInclusionPath { value, path })
+    }
+}
+
+impl<T> Merkle<T>
+where
+    T: AsRef<[u8]>,
+{
+    pub fn commit(data: Vec<T>) -> Self {
+        assert!(
+            data.len().is_power_of_two(),
+            "Data length must be a power of two"
+        );
+
+        let first_layer: Vec<HashDigest> = data.iter().map(|item| hash_leaf(item)).collect();
+
+        let mut layers: Vec<Vec<HashDigest>> = vec![first_layer];
+
+        while layers.last().unwrap().len() > 1 {
+            let current_layer = layers.last().unwrap();
+            let next_layer: Vec<HashDigest> = current_layer
+                .chunks(2)
+                .map(|pair| hash_node(&pair[0], &pair[1]))
+                .collect();
+            layers.push(next_layer);
+        }
+
+        Merkle { layers, data }
+    }
+}
+
+impl<T> Merkle<Vec<T>>
+where
+    T: AsRef<[u8]>,
+{
+    pub fn batch_commit(data: Vec<Vec<T>>) -> Self {
+        todo!()
     }
 }
 
@@ -154,9 +165,22 @@ where
     }
 }
 
+impl<T> MerkleInclusionPath<Vec<T>>
+where
+    T: AsRef<[u8]> + Clone,
+{
+    pub fn batch_verify(
+        &self,
+        root: &HashDigest,
+        index: usize,
+    ) -> Result<(), MerkleInclusionPathError> {
+        todo!()
+    }
+}
+
 #[cfg(test)]
 #[test]
-fn test_open_verify() {
+fn merkle_test() {
     let data = vec![[0], [8], [4], [1], [5], [7], [6], [1]];
     let merkle_tree = Merkle::commit(data);
 
