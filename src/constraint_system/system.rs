@@ -11,9 +11,10 @@ pub struct System<F> {
     constraint_mask: Box<[F]>,
     layout: WitnessLayout,
     commitment: Commitment<F>,
-    trace: Option<Trace<F>>,
+    pub trace: Option<Trace<F>>,
 }
 
+#[derive(Clone)]
 pub struct WitnessLayout {
     // Total number of columns
     pub columns: usize,

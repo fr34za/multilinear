@@ -193,8 +193,20 @@ impl<F: HashableField + NttField> PCSProof<F> {
 
 #[cfg(test)]
 mod tests {
+    use std::marker::PhantomData;
+
     use super::*;
-    use crate::{benchmark, field::Field128};
+    use crate::{
+        benchmark,
+        constraint_system::{
+            constraints::{ConstraintSet, Expr},
+            system::{System, WitnessLayout},
+            trace::{Commitment, Trace},
+        },
+        field::Field128,
+    };
+    type F = Field128;
+    const TOTAL_LOG_HEIGHT: u8 = 20;
 
     #[test]
     fn multilinear_pcs_bench_test() {
@@ -214,5 +226,93 @@ mod tests {
         );
         let transcript = &mut Transcript::new();
         benchmark!("PCS verification ", proof.verify(transcript).unwrap());
+    }
+
+    fn demo_trace(total_log_height: u8) -> Trace<F> {
+        let f = F::from;
+        let log_height = 6;
+
+        // The first three columns are pythagorean triples
+        // The fourth is the sum of the first two
+        let mut trace = [
+            3, 4, 5, 7, //
+            5, 12, 13, 17, //
+            8, 15, 17, 23, //
+            7, 24, 25, 31, //
+            20, 21, 29, 41, //
+            12, 35, 37, 47, //
+            9, 40, 41, 49, //
+            28, 45, 53, 73, //
+            11, 60, 61, 71, //
+            16, 63, 65, 79, //
+            33, 56, 65, 89, //
+            48, 55, 73, 103, //
+            13, 84, 85, 97, //
+            36, 77, 85, 113, //
+            39, 80, 89, 119, //
+            65, 72, 97, 137, //
+        ]
+        .map(f)
+        .to_vec();
+
+        for _ in 0..(total_log_height - log_height) {
+            trace.extend(trace.clone());
+        }
+        Trace::new(trace.into(), 1)
+    }
+
+    fn demo_set() -> ConstraintSet<F> {
+        let expr1 = Expr(|_, _| F::from(0));
+        let constraints = [expr1].into();
+        let degree = 1;
+        ConstraintSet::new(constraints, degree)
+    }
+
+    fn demo_layout() -> WitnessLayout {
+        WitnessLayout {
+            columns: 1,
+            randoms: 0,
+            sum_columns: [].into(),
+            pre_random_columns: 0,
+        }
+    }
+
+    #[test]
+    fn snark_test() {
+        let set = demo_set();
+        let trace = demo_trace(TOTAL_LOG_HEIGHT);
+        let layout = demo_layout();
+
+        let prover_transcript = &mut Transcript::new();
+        let mut prover = System::<F>::prover(prover_transcript, set.clone(), layout.clone(), trace);
+        let (pcs_proof, pols) = benchmark!("SNARK proof: ", {
+            let tables = &mut prover.build_tables();
+            let sum = F::from(0);
+            let (pols, inputs) =
+                prover.compute_sumcheck_polynomials(prover_transcript, tables, sum);
+            let trace = prover.trace.unwrap();
+            prover.trace = None;
+            let multilinear = MultilinearPolynomialEvals {
+                evals: trace.matrix.into(),
+            };
+            let output = multilinear.evaluate(&inputs);
+            (
+                PCSProof::prove(inputs.into(), output, multilinear, prover_transcript),
+                pols,
+            )
+        });
+        let verifier_transcript = &mut Transcript::new();
+        let verifier = System::<F>::verifier(
+            verifier_transcript,
+            set,
+            layout,
+            Commitment(PhantomData),
+            TOTAL_LOG_HEIGHT as usize,
+        );
+        benchmark!("SNARK verification: ", {
+            let output = pcs_proof.output;
+            verifier.verify_with_evaluations(verifier_transcript, &pols, F::from(0), &[output]);
+            pcs_proof.verify(verifier_transcript).unwrap();
+        });
     }
 }
