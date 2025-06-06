@@ -3,7 +3,7 @@
 use super::{evaluation::Mask, system::System};
 use crate::{
     field::Field,
-    polynomials::{Polynomial, PolynomialEvals},
+    polynomials::{MultilinearPolynomialEvals, Polynomial, PolynomialEvals},
     transcript::{HashableField, Transcript},
 };
 
@@ -15,7 +15,7 @@ pub struct SumcheckTables<F> {
 }
 
 pub struct SumcheckPolynomial<F> {
-    nonzero_coeffs: Box<[F]>,
+    pub nonzero_coeffs: Box<[F]>,
 }
 
 impl<F: HashableField> System<F> {
@@ -42,7 +42,7 @@ impl<F: HashableField> System<F> {
         transcript: &mut Transcript,
         tables: &mut SumcheckTables<F>,
         sum: F,
-    ) -> Box<[SumcheckPolynomial<F>]> {
+    ) -> (Box<[SumcheckPolynomial<F>]>, Box<[F]>) {
         let composition_degree = self.constraints().degree();
         tables.compute_sumcheck_polynomials(
             &|args| self.evaluate_composition(args),
@@ -87,34 +87,88 @@ impl<F: HashableField> System<F> {
             "Does not match polynomial evaluation"
         );
     }
+
+    pub fn verify_with_evaluations(
+        &self,
+        transcript: &mut Transcript,
+        pols: &[SumcheckPolynomial<F>],
+        sum: F,
+        output: &[F],
+    ) {
+        let mut rs = Vec::with_capacity(pols.len());
+        let mut iter = pols.iter();
+        let sumcheck_pol = iter.next().expect("At least one polynomial is expected");
+        sumcheck_pol
+            .nonzero_coeffs
+            .iter()
+            .for_each(|coeff| transcript.absorb(coeff.as_ref()));
+        let mut pol = sumcheck_pol.to_polynomial(sum);
+        for sumcheck_pol in iter {
+            let r = transcript.next_challenge();
+            sumcheck_pol
+                .nonzero_coeffs
+                .iter()
+                .for_each(|coeff| transcript.absorb(coeff.as_ref()));
+            pol = sumcheck_pol.to_polynomial(pol.evaluate(r));
+            rs.push(r);
+        }
+        let r = transcript.next_challenge();
+        rs.push(r);
+        let delta = self.evaluate_delta(&rs);
+        let composition = self.evaluate_composition(output);
+        assert_eq!(
+            delta * composition,
+            pol.evaluate(r),
+            "Does not match polynomial evaluation"
+        );
+    }
 }
 
 impl<F: HashableField> SumcheckTables<F> {
+    pub fn build_tables_for_pcs(inputs: &[F], poly: &MultilinearPolynomialEvals<F>) -> Self {
+        let n_vars = inputs.len();
+        let height = poly.evals.len();
+        assert_eq!(1 << n_vars, height);
+        let trace = poly.evals.clone();
+        let delta = (0..trace.len())
+            .map(|index| {
+                let mask = Mask { index, n_vars };
+                mask.evaluate(inputs)
+            })
+            .collect::<Vec<_>>();
+        Self {
+            matrix: trace.into(),
+            width: 1,
+            height,
+            delta: delta.into(),
+        }
+    }
+
     pub fn compute_sumcheck_polynomials(
         &mut self,
         composition: &impl Fn(&[F]) -> F,
         composition_degree: usize,
         transcript: &mut Transcript,
         sum: F,
-    ) -> Box<[SumcheckPolynomial<F>]> {
+    ) -> (Box<[SumcheckPolynomial<F>]>, Box<[F]>) {
         let mut pols = vec![];
+        let mut randoms = vec![];
         let mut previous_sum = sum;
         // degree of the composition polynomial plus 1 to account for
         // the delta multilinear
         let total_degree = composition_degree + 1;
         let n_rounds = self.height.trailing_zeros();
         for _ in 0..n_rounds {
-            pols.push(
-                self.compute_sumcheck_polynomial(
-                    composition,
-                    total_degree,
-                    &mut previous_sum,
-                    transcript,
-                )
-                .0,
-            )
+            let (pol, r) = self.compute_sumcheck_polynomial(
+                composition,
+                total_degree,
+                &mut previous_sum,
+                transcript,
+            );
+            pols.push(pol);
+            randoms.push(r);
         }
-        pols.into()
+        (pols.into(), randoms.into())
     }
 
     pub fn compute_sumcheck_polynomial(
@@ -303,7 +357,9 @@ mod tests {
         let verifier_transcript = &mut transcript.clone();
         let tables = &mut prover.build_tables();
         let sum = F::from(0);
-        let pols = prover.compute_sumcheck_polynomials(transcript, tables, sum);
+        let pols = prover
+            .compute_sumcheck_polynomials(transcript, tables, sum)
+            .0;
         println!("{pols:#?}");
         prover.verify_sumcheck_debug(verifier_transcript, &pols, sum);
     }
@@ -331,7 +387,9 @@ mod tests {
         let tables = &mut benchmark!("  - Table generation: ", prover.build_tables());
         let pols = benchmark!(
             "  - Proof: ",
-            prover.compute_sumcheck_polynomials(transcript, tables, sum)
+            prover
+                .compute_sumcheck_polynomials(transcript, tables, sum)
+                .0
         );
         benchmark!(
             "  - Verification: ",

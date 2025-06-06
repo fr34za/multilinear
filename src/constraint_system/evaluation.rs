@@ -73,12 +73,12 @@ impl Mask {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Delta<'a, F> {
-    data: &'a [F],
+pub struct Delta<'a, F> {
+    pub data: &'a [F],
 }
 
 impl<F: Field> Delta<'_, F> {
-    fn evaluate(&self, points: &[F]) -> F {
+    pub fn evaluate(&self, points: &[F]) -> F {
         let data = &self.data;
         let one = F::from(1);
         let pass = |i| {

@@ -1,3 +1,5 @@
+pub mod multilinear_pcs;
+
 use crate::merkle_tree::{HashDigest, Merkle, MerkleInclusionPath, MerkleInclusionPathError};
 use crate::ntt::{NttField, Polynomial};
 use crate::transcript::{HashableField, Transcript};
@@ -307,6 +309,14 @@ impl<F: HashableField + NttField> FriProof<F> {
         // Last fold step
         transcript.absorb(self.last_elem.as_ref());
 
+        self.verify_queries(&mut transcript, &random_elements)
+    }
+
+    pub fn verify_queries(
+        &self,
+        transcript: &mut Transcript,
+        random_elements: &[F],
+    ) -> Result<(), FriProofError> {
         let log_domain_size = self.commitments.len() + LOG_BLOWUP;
         let domain_size = 1 << log_domain_size;
         let gen = F::pow_2_generator(log_domain_size as u64).unwrap();
@@ -317,8 +327,8 @@ impl<F: HashableField + NttField> FriProof<F> {
                 gen,
                 &self.commitments,
                 self.last_elem,
-                &random_elements,
-                &mut transcript,
+                random_elements,
+                transcript,
             )?;
         }
 

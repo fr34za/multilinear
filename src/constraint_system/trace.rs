@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 pub struct Trace<F> {
-    matrix: Box<[F]>,
+    pub matrix: Box<[F]>,
     height: usize,
     width: usize,
 }
@@ -38,7 +38,7 @@ impl<F: Copy> Trace<F> {
 }
 
 // TODO
-pub struct Commitment<F>(PhantomData<F>);
+pub struct Commitment<F>(pub(crate) PhantomData<F>);
 
 // TODO
 impl<F> Commitment<F> {
