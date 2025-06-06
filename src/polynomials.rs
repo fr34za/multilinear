@@ -135,7 +135,7 @@ impl<F: Field> MultilinearPolynomial<F> {
             .enumerate()
             .map(|(pos, &coeff)| {
                 let mut term = coeff;
-                for (bit_pos, &arg) in args.iter().enumerate() {
+                for (bit_pos, &arg) in args.iter().rev().enumerate() {
                     if (pos >> bit_pos) & 1 == 1 {
                         term *= arg;
                     }
@@ -174,7 +174,7 @@ impl<F: Field> MultilinearPolynomialEvals<F> {
             .enumerate()
             .map(|(pos, &eval)| {
                 let mut term = eval;
-                for (bit_pos, &arg) in args.iter().enumerate() {
+                for (bit_pos, &arg) in args.iter().rev().enumerate() {
                     if (pos >> bit_pos) & 1 == 1 {
                         term *= arg;
                     } else {

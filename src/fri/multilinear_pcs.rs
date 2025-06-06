@@ -1,17 +1,15 @@
 use crate::{
     constraint_system::{
-        constraints::{ConstraintSet, Expr},
+        evaluation::Delta,
         sumcheck::{SumcheckPolynomial, SumcheckTables},
-        system::{System, WitnessLayout},
-        trace::Trace,
     },
     fri::LOG_BLOWUP,
-    ntt::NttField,
+    ntt::{bit_reverse_permutation, NttField},
     polynomials::MultilinearPolynomialEvals,
     transcript::{HashableField, Transcript},
 };
 
-use super::{FriProof, FriProofError, FriProverData, NUM_QUERIES};
+use super::{reed_solomon, FriProof, FriProofError, FriProverData, NUM_QUERIES};
 
 pub struct PCSProverData<F> {
     // FRI data
@@ -56,8 +54,8 @@ impl<F: HashableField + NttField> PCSProverData<F> {
         let mut previous_sum = output;
         // Define the composition function
         let composition = &|x: &[F]| x[0];
-        let total_degree = 1;
-
+        // TODO Why 2 and not 1???
+        let total_degree = 2;
         for k in 0..num_steps {
             // Compute the sumcheck polynomial
             // This returns a tuple (SumcheckPolynomial, F)
@@ -74,7 +72,6 @@ impl<F: HashableField + NttField> PCSProverData<F> {
             // Run fold_step from fri
             prover_data.fri_data.fold_step(gen_pows, k, r, transcript);
         }
-
         assert!(prover_data.fri_data.last_element.is_some());
         prover_data
     }
@@ -98,7 +95,9 @@ impl<F: HashableField + NttField> PCSProof<F> {
         transcript: &mut Transcript,
     ) -> Self {
         // First, convert the polynomial to canonical form
-        let coeffs = poly.to_coefficient();
+        let mut coeffs = poly.to_coefficient();
+        // bit reverse to change endianess
+        bit_reverse_permutation(&mut coeffs.coeffs);
 
         // Compute gen_pows for the RS code
         let log_domain_size = coeffs.coeffs.len().trailing_zeros() as u64 + LOG_BLOWUP as u64;
@@ -106,7 +105,7 @@ impl<F: HashableField + NttField> PCSProof<F> {
         let gen = gen_pows[1];
 
         // Then compute the RS code of the canonical coefficients
-        let code = super::reed_solomon(coeffs.coeffs, gen);
+        let code = reed_solomon(coeffs.coeffs, gen);
 
         // Run the PCS fold, using the polynomial, code, gen_pows
         let prover_data = PCSProverData::fold(&inputs, output, &poly, &gen_pows, &code, transcript);
@@ -142,41 +141,78 @@ impl<F: HashableField + NttField> PCSProof<F> {
         if self.fri_proof.queries.len() != NUM_QUERIES {
             return Err(FriProofError::WrongNumberOfQueries);
         }
+        let n = self.fri_proof.commitments.len();
+        assert_eq!(n, self.sumcheck_polynomials.len());
+        assert_eq!(n, self.inputs.len());
 
-        // First, absorb the merkle_roots into the transcript
         // This simulates the "fold" phase of FRI
         let mut random_elements = Vec::new();
-        for root in self.fri_proof.commitments.iter() {
+        for (root, poly) in self
+            .fri_proof
+            .commitments
+            .iter()
+            .zip(self.sumcheck_polynomials.iter())
+        {
+            // Absorb the root into the transcript
+            // This is similar to init/fold
             transcript.absorb(root.as_slice());
-            let r: F = transcript.next_challenge();
-            random_elements.push(r);
-        }
-
-        // Verify all sumcheck polynomials
-        // This mimics the fold loop, but for verification
-        let mut previous_sum = self.output;
-
-        for poly in &self.sumcheck_polynomials {
             // Absorb the polynomial coefficients into the transcript
             // This is similar to what happens in compute_sumcheck_polynomial
             for coeff in poly.nonzero_coeffs.iter() {
                 transcript.absorb(coeff.as_ref());
             }
-
-            // Convert the sumcheck polynomial to a regular polynomial
-            let polynomial = poly.to_polynomial(previous_sum);
-
-            // Get the next challenge from the transcript
             let r = transcript.next_challenge();
-
-            // Update the previous sum for the next iteration
-            previous_sum = polynomial.evaluate(r);
+            random_elements.push(r);
         }
-
         // Absorb the last element into the transcript
         transcript.absorb(self.fri_proof.last_elem.as_ref());
 
+        let mut pol_iter = self.sumcheck_polynomials.iter();
+        let mut random_iter = random_elements.iter();
+        let mut pol = pol_iter.next().unwrap().to_polynomial(self.output);
+        for sumcheck_pol in pol_iter {
+            let r = *random_iter.next().unwrap();
+            pol = sumcheck_pol.to_polynomial(pol.evaluate(r));
+        }
+        let r = *random_iter.next().unwrap();
+        let last_elem = self.fri_proof.last_elem;
+
+        let delta = Delta { data: &self.inputs }.evaluate(&random_elements);
+        assert_eq!(
+            delta * last_elem,
+            pol.evaluate(r),
+            "Does not match polynomial evaluation"
+        );
+
         // Finally, verify the FRI queries
-        self.fri_proof.verify_queries(transcript, &random_elements)
+        self.fri_proof
+            .verify_queries(transcript, &random_elements)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{benchmark, field::Field128};
+
+    #[test]
+    fn multilinear_pcs_bench_test() {
+        let n_vars = 20;
+        let evals: Vec<Field128> = (0..1 << n_vars)
+            .map(|i| Field128::from(i as i64 * 7 + 3))
+            .collect();
+        let multilinear = MultilinearPolynomialEvals { evals };
+        let inputs = (0..n_vars)
+            .map(|i| Field128::from(i as i64))
+            .collect::<Vec<_>>();
+        let output = multilinear.evaluate(&inputs);
+        let transcript = &mut Transcript::new();
+        let proof = benchmark!(
+            "PCS proof: ",
+            PCSProof::prove(inputs, output, multilinear, transcript)
+        );
+        let transcript = &mut Transcript::new();
+        benchmark!("PCS verification ", proof.verify(transcript).unwrap());
     }
 }

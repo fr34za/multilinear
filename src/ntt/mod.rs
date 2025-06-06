@@ -110,7 +110,7 @@ impl<F: NttField> Polynomial<F> {
     }
 }
 
-fn bit_reverse_permutation<F>(values: &mut [F]) {
+pub fn bit_reverse_permutation<F>(values: &mut [F]) {
     let n = values.len();
     let bits = n.trailing_zeros() as usize;
 
