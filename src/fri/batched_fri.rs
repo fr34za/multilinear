@@ -80,7 +80,7 @@ impl<F: HashableField + NttField> BatchedFriProverData<F> {
         transcript.absorb(batch_layer.root().as_slice());
 
         // Create the fingerprint random number
-        let fingerprint_r = transcript.next_challenge();
+        let fingerprint_r: F = transcript.next_challenge();
 
         // Absorb the fingerprint random number
         transcript.absorb(fingerprint_r.as_ref());
@@ -197,32 +197,7 @@ impl<F: HashableField + NttField> BatchedFriProverData<F> {
         // Remaining steps are normal fold steps
         for k in 1..num_steps {
             let r = transcript.next_challenge();
-            if let Some(last_merkle) = prover_data.fri_data.merkle_trees.last() {
-                let last_data = last_merkle.data.clone();
-                let mut fri_data_clone = prover_data.fri_data.clone();
-                fri_data_clone.merkle_trees.pop(); // Remove the last tree to avoid duplication
-
-                // Create a temporary FriProverData to use fold_step
-                let mut temp_fri_data = FriProverData {
-                    merkle_trees: fri_data_clone.merkle_trees,
-                    last_element: None,
-                };
-
-                // Manually reconstruct the code from RS pairs
-                let mut code = Vec::with_capacity(last_data.len() * 2);
-                for pair in &last_data {
-                    code.push(pair.value);
-                }
-                for pair in &last_data {
-                    code.push(pair.minus_value);
-                }
-
-                // Use the normal fold_step
-                temp_fri_data.fold_step(gen_pows, k, r, transcript);
-
-                // Update the original fri_data
-                prover_data.fri_data = temp_fri_data;
-            }
+            prover_data.fri_data.fold_step(gen_pows, k, r, transcript);
         }
 
         assert!(prover_data.fri_data.last_element.is_some());
