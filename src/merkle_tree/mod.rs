@@ -90,7 +90,49 @@ where
     T: AsRef<[u8]>,
 {
     pub fn batch_commit(data: Vec<Vec<T>>) -> Self {
-        todo!()
+        // Ensure all batches are present and have the same length
+        assert!(!data.is_empty(), "Data must not be empty");
+        let batch_size = data[0].len();
+        assert!(
+            batch_size.is_power_of_two(),
+            "Each batch length must be a power of two"
+        );
+
+        // Ensure all batches have the same length
+        for batch in &data {
+            assert_eq!(
+                batch.len(),
+                batch_size,
+                "All batches must have the same length"
+            );
+        }
+
+        // Hash each batch as a whole to create the first layer
+        let first_layer: Vec<HashDigest> = data
+            .iter()
+            .map(|batch| {
+                // Create a combined hash for the entire batch
+                let mut hasher = Sha256::new();
+                for item in batch {
+                    hasher.update(item.as_ref());
+                }
+                hasher.finalize()
+            })
+            .collect();
+
+        // Build the Merkle tree from the first layer
+        let mut layers: Vec<Vec<HashDigest>> = vec![first_layer];
+
+        while layers.last().unwrap().len() > 1 {
+            let current_layer = layers.last().unwrap();
+            let next_layer: Vec<HashDigest> = current_layer
+                .chunks(2)
+                .map(|pair| hash_node(&pair[0], &pair[1]))
+                .collect();
+            layers.push(next_layer);
+        }
+
+        Merkle { layers, data }
     }
 }
 
@@ -174,7 +216,40 @@ where
         root: &HashDigest,
         index: usize,
     ) -> Result<(), MerkleInclusionPathError> {
-        todo!()
+        // For batch verification, we need to hash the entire batch first
+        let mut computed_hash = {
+            let mut hasher = Sha256::new();
+            for item in &self.value {
+                hasher.update(item.as_ref());
+            }
+            hasher.finalize()
+        };
+
+        // Then follow the same verification process as the regular verify method
+        let mut computed_index = 0;
+        for (i, (sibling_hash, direction)) in self.path.iter().enumerate() {
+            match direction {
+                Direction::Left => {
+                    computed_index += 1 << i;
+                    computed_hash = hash_node(sibling_hash, &computed_hash)
+                }
+                Direction::Right => computed_hash = hash_node(&computed_hash, sibling_hash),
+            };
+        }
+
+        if &computed_hash != root {
+            return Err(MerkleInclusionPathError::IncompatibleHash(
+                *root,
+                computed_hash,
+            ));
+        }
+        if computed_index != index {
+            return Err(MerkleInclusionPathError::IncompatibleIndex(
+                index,
+                computed_index,
+            ));
+        }
+        Ok(())
     }
 }
 
