@@ -284,46 +284,8 @@ mod tests {
     fn batched_merkle_test() {
         // Create batched data with random values in the format vec![8,2]
         let data = vec![
-            vec![
-                vec![0, 4],
-                vec![8, 2],
-                vec![4, 9],
-                vec![1, 3],
-                vec![5, 7],
-                vec![7, 2],
-                vec![6, 8],
-                vec![1, 5],
-            ],
-            vec![
-                vec![9, 3],
-                vec![2, 7],
-                vec![6, 1],
-                vec![3, 8],
-                vec![4, 2],
-                vec![8, 5],
-                vec![1, 9],
-                vec![7, 4],
-            ],
-            vec![
-                vec![3, 6],
-                vec![5, 1],
-                vec![8, 3],
-                vec![2, 9],
-                vec![7, 5],
-                vec![1, 8],
-                vec![4, 3],
-                vec![6, 2],
-            ],
-            vec![
-                vec![7, 1],
-                vec![3, 9],
-                vec![5, 2],
-                vec![8, 6],
-                vec![1, 4],
-                vec![9, 7],
-                vec![2, 5],
-                vec![4, 8],
-            ],
+            vec![[0], [8], [4], [1], [5], [7], [6], [1]],
+            vec![[1], [3], [2], [3], [2], [1], [2], [3]],
         ];
 
         // Create a batched Merkle tree

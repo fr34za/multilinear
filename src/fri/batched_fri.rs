@@ -4,7 +4,7 @@ use crate::{
     transcript::{HashableField, Transcript},
 };
 
-use super::{FriProofError, FriProverData, QueryProof, ReedSolomonPair};
+use super::{FriProverData, QueryProof, ReedSolomonPair};
 
 pub struct BatchedFriProverData<F> {
     // batched commit
@@ -211,7 +211,8 @@ impl<F: HashableField + NttField> BatchedFriProverData<F> {
         let batch_layer = self.batch_layer.open(index).expect("Index out of bounds");
 
         // Open the query in the FRI data
-        let query_proof = self.fri_data.open_query_at(index);
+	let n = self.batch_layer.data.len() / 2;
+        let query_proof = self.fri_data.open_query_at(index % n);
 
         BatchedQueryProof {
             batch_layer,
@@ -266,6 +267,10 @@ mod tests {
         // Use a smaller log_n value
         let log_n = 4;
 
+        // Calculate gen_pows for the RS code
+        let gen_pows =
+            Field128::pow_2_generator_powers((log_n + super::super::LOG_BLOWUP) as u64).unwrap();
+
         // Create 4 different RS codes
         let mut codes = Vec::new();
         for j in 0..4 {
@@ -273,19 +278,10 @@ mod tests {
                 .map(|i| Field128::from((i as i64 * 7 + 3) + j * 100))
                 .collect();
 
-            // Calculate gen_pows for the RS code
-            let gen_pows =
-                Field128::pow_2_generator_powers((log_n + super::super::LOG_BLOWUP) as u64)
-                    .unwrap();
-
             // Generate the RS code
             let code = reed_solomon(values, gen_pows[1]);
             codes.push(code);
         }
-
-        // Calculate gen_pows for the batched FRI
-        let gen_pows =
-            Field128::pow_2_generator_powers((log_n + super::super::LOG_BLOWUP) as u64).unwrap();
 
         // Create a transcript
         let mut transcript = Transcript::new();
@@ -309,17 +305,16 @@ mod tests {
         // Use a smaller log_n value for benchmarking
         let log_n = 6;
 
+        // Calculate gen_pows for the RS code
+        let gen_pows =
+            Field128::pow_2_generator_powers((log_n + super::super::LOG_BLOWUP) as u64).unwrap();
+
         // Create 4 different RS codes
         let mut codes = Vec::new();
         for j in 0..4 {
             let values: Vec<Field128> = (0..1 << log_n)
                 .map(|i| Field128::from((i as i64 * 7 + 3) + j * 100))
                 .collect();
-
-            // Calculate gen_pows for the RS code
-            let gen_pows =
-                Field128::pow_2_generator_powers((log_n + super::super::LOG_BLOWUP) as u64)
-                    .unwrap();
 
             // Generate the RS code
             let code = benchmark!(
@@ -328,12 +323,6 @@ mod tests {
             );
             codes.push(code);
         }
-
-        // Calculate gen_pows for the batched FRI
-        let gen_pows = benchmark!(
-            "Generator powers time: ",
-            Field128::pow_2_generator_powers((log_n + super::super::LOG_BLOWUP) as u64).unwrap()
-        );
 
         // Create a transcript
         let mut transcript = Transcript::new();
