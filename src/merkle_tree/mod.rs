@@ -264,3 +264,86 @@ fn merkle_test() {
     println!("Inclusion Path for index 5:\n {proof:x?}");
     proof.verify(&merkle_tree.root(), 5).unwrap();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merkle_test() {
+        let data = vec![[0], [8], [4], [1], [5], [7], [6], [1]];
+        let merkle_tree = Merkle::commit(data);
+
+        println!("Merkle Root:\n {:x?}", merkle_tree.root());
+        let proof = merkle_tree.open(5).unwrap();
+        println!("Inclusion Path for index 5:\n {proof:x?}");
+        proof.verify(&merkle_tree.root(), 5).unwrap();
+    }
+
+    #[test]
+    fn batched_merkle_test() {
+        // Create batched data with random values in the format vec![8,2]
+        let data = vec![
+            vec![
+                vec![0, 4],
+                vec![8, 2],
+                vec![4, 9],
+                vec![1, 3],
+                vec![5, 7],
+                vec![7, 2],
+                vec![6, 8],
+                vec![1, 5],
+            ],
+            vec![
+                vec![9, 3],
+                vec![2, 7],
+                vec![6, 1],
+                vec![3, 8],
+                vec![4, 2],
+                vec![8, 5],
+                vec![1, 9],
+                vec![7, 4],
+            ],
+            vec![
+                vec![3, 6],
+                vec![5, 1],
+                vec![8, 3],
+                vec![2, 9],
+                vec![7, 5],
+                vec![1, 8],
+                vec![4, 3],
+                vec![6, 2],
+            ],
+            vec![
+                vec![7, 1],
+                vec![3, 9],
+                vec![5, 2],
+                vec![8, 6],
+                vec![1, 4],
+                vec![9, 7],
+                vec![2, 5],
+                vec![4, 8],
+            ],
+        ];
+
+        // Create a batched Merkle tree
+        let merkle_tree = Merkle::batch_commit(data);
+
+        println!("Batched Merkle Root:\n {:x?}", merkle_tree.root());
+
+        // Open and verify a proof for batch index 5
+        let proof = merkle_tree.open(5).unwrap();
+        println!("Batched Inclusion Path for index 5:\n {proof:x?}");
+
+        // Verify using batch_verify
+        proof.batch_verify(&merkle_tree.root(), 5).unwrap();
+
+        // Try another index
+        let proof = merkle_tree.open(2).unwrap();
+        println!("Batched Inclusion Path for index 2:\n {proof:x?}");
+        proof.batch_verify(&merkle_tree.root(), 2).unwrap();
+
+        // Verify that incorrect index fails
+        assert!(proof.batch_verify(&merkle_tree.root(), 1).is_err());
+    }
+}

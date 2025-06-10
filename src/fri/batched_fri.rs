@@ -255,3 +255,100 @@ impl<F: HashableField + NttField> BatchedFriProof<F> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{benchmark, field::Field128, fri::reed_solomon};
+
+    #[test]
+    fn batched_fri_verify_test() {
+        // Use a smaller log_n value
+        let log_n = 4;
+
+        // Create 4 different RS codes
+        let mut codes = Vec::new();
+        for j in 0..4 {
+            let values: Vec<Field128> = (0..1 << log_n)
+                .map(|i| Field128::from((i as i64 * 7 + 3) + j * 100))
+                .collect();
+
+            // Calculate gen_pows for the RS code
+            let gen_pows =
+                Field128::pow_2_generator_powers((log_n + super::super::LOG_BLOWUP) as u64)
+                    .unwrap();
+
+            // Generate the RS code
+            let code = reed_solomon(values, gen_pows[1]);
+            codes.push(code);
+        }
+
+        // Calculate gen_pows for the batched FRI
+        let gen_pows =
+            Field128::pow_2_generator_powers((log_n + super::super::LOG_BLOWUP) as u64).unwrap();
+
+        // Create a transcript
+        let mut transcript = Transcript::new();
+
+        // Generate the batched FRI proof
+        let proof = BatchedFriProof::prove(&codes, &gen_pows, &mut transcript);
+
+        // Print some information about the proof
+        println!("Batched FRI proof generated with {} codes", codes.len());
+        println!(
+            "Batch layer commitment: {:x?}",
+            proof.batch_layer_commitment
+        );
+        println!("Number of commitments: {}", proof.commitments.len());
+        println!("Number of queries: {}", proof.queries.len());
+        println!("Last element: {:?}", proof.last_elem);
+    }
+
+    #[test]
+    fn batched_fri_benchmark() {
+        // Use a smaller log_n value for benchmarking
+        let log_n = 6;
+
+        // Create 4 different RS codes
+        let mut codes = Vec::new();
+        for j in 0..4 {
+            let values: Vec<Field128> = (0..1 << log_n)
+                .map(|i| Field128::from((i as i64 * 7 + 3) + j * 100))
+                .collect();
+
+            // Calculate gen_pows for the RS code
+            let gen_pows =
+                Field128::pow_2_generator_powers((log_n + super::super::LOG_BLOWUP) as u64)
+                    .unwrap();
+
+            // Generate the RS code
+            let code = benchmark!(
+                format!("Reed solomon encoding time for code {}: ", j),
+                reed_solomon(values, gen_pows[1])
+            );
+            codes.push(code);
+        }
+
+        // Calculate gen_pows for the batched FRI
+        let gen_pows = benchmark!(
+            "Generator powers time: ",
+            Field128::pow_2_generator_powers((log_n + super::super::LOG_BLOWUP) as u64).unwrap()
+        );
+
+        // Create a transcript
+        let mut transcript = Transcript::new();
+
+        // Generate the batched FRI proof
+        let proof = benchmark!(
+            "Batched FRI proof time: ",
+            BatchedFriProof::prove(&codes, &gen_pows, &mut transcript)
+        );
+
+        // Print some information about the proof
+        println!(
+            "Batched FRI proof size: {} commitments, {} queries",
+            proof.commitments.len(),
+            proof.queries.len()
+        );
+    }
+}
