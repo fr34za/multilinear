@@ -107,6 +107,8 @@ where
             );
         }
 
+	// FIX the number of layers is the logarithm of the batch size, not
+	// the number of vectors
         // Hash each batch as a whole to create the first layer
         let first_layer: Vec<HashDigest> = data
             .iter()
@@ -133,6 +135,18 @@ where
         }
 
         Merkle { layers, data }
+    }
+
+    pub fn open(&self, index: usize) -> Option<MerkleInclusionPath<Vec<T>>>
+    where
+        T: Clone,
+    {
+	// input:
+	// [[1, 3, 4, 5], [4, 1, 2, 3]]
+	// create merkle tree such that the data is still
+	// [[1, 3, 4, 5], [4, 1, 2, 3]]
+	// but when opening say, index 2 it returns [4, 2]
+	todo!()
     }
 }
 
