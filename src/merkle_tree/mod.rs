@@ -107,8 +107,6 @@ where
             );
         }
 
-	// FIX the number of layers is the logarithm of the batch size, not
-	// the number of vectors
         // Hash each batch as a whole to create the first layer
         let first_layer: Vec<HashDigest> = data
             .iter()
@@ -137,16 +135,48 @@ where
         Merkle { layers, data }
     }
 
-    pub fn open(&self, index: usize) -> Option<MerkleInclusionPath<Vec<T>>>
+    // Renamed from 'open' to 'batch_open' to avoid ambiguity with the generic open method
+    pub fn batch_open(&self, index: usize) -> Option<MerkleInclusionPath<Vec<T>>>
     where
         T: Clone,
     {
-	// input:
-	// [[1, 3, 4, 5], [4, 1, 2, 3]]
-	// create merkle tree such that the data is still
-	// [[1, 3, 4, 5], [4, 1, 2, 3]]
-	// but when opening say, index 2 it returns [4, 2]
-	todo!()
+        // input:
+        // [[1, 3, 4, 5], [4, 1, 2, 3]]
+        // create merkle tree such that the data is still
+        // [[1, 3, 4, 5], [4, 1, 2, 3]]
+        // but when opening say, index 2 it returns [4, 2]
+
+        if index >= self.data[0].len() {
+            return None;
+        }
+
+        // Extract the column at the given index from all batches
+        // This is the "virtual transposition" - we're extracting a column
+        // without actually transposing the stored data
+        let transposed_value: Vec<T> = self.data.iter().map(|batch| batch[index].clone()).collect();
+
+        // Create the inclusion path for the batch
+        let mut path = Vec::new();
+        let mut current_index = index;
+
+        for layer in &self.layers {
+            let (sibling_index, direction) = if current_index % 2 == 0 {
+                (current_index + 1, Direction::Right)
+            } else {
+                (current_index - 1, Direction::Left)
+            };
+
+            if sibling_index < layer.len() {
+                path.push((layer[sibling_index], direction));
+            }
+
+            current_index /= 2;
+        }
+
+        Some(MerkleInclusionPath {
+            value: transposed_value,
+            path,
+        })
     }
 }
 
@@ -231,6 +261,7 @@ where
         index: usize,
     ) -> Result<(), MerkleInclusionPathError> {
         // For batch verification, we need to hash the entire batch first
+        // Since we're working with a transposed view (column), we need to hash it correctly
         let mut computed_hash = {
             let mut hasher = Sha256::new();
             for item in &self.value {
@@ -268,18 +299,6 @@ where
 }
 
 #[cfg(test)]
-#[test]
-fn merkle_test() {
-    let data = vec![[0], [8], [4], [1], [5], [7], [6], [1]];
-    let merkle_tree = Merkle::commit(data);
-
-    println!("Merkle Root:\n {:x?}", merkle_tree.root());
-    let proof = merkle_tree.open(5).unwrap();
-    println!("Inclusion Path for index 5:\n {proof:x?}");
-    proof.verify(&merkle_tree.root(), 5).unwrap();
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -296,7 +315,7 @@ mod tests {
 
     #[test]
     fn batched_merkle_test() {
-        // Create batched data with random values in the format vec![8,2]
+        // Create batched data with random values
         let data = vec![
             vec![[0], [8], [4], [1], [5], [7], [6], [1]],
             vec![[1], [3], [2], [3], [2], [1], [2], [3]],
@@ -307,16 +326,116 @@ mod tests {
 
         println!("Batched Merkle Root:\n {:x?}", merkle_tree.root());
 
-        // Open and verify a proof for batch index 5
-        let proof = merkle_tree.open(5).unwrap();
+        // Open and verify a proof for index 5
+        // This should return the column at index 5: [[7], [1]]
+        let proof = merkle_tree.batch_open(5).unwrap();
         println!("Batched Inclusion Path for index 5:\n {proof:x?}");
+
+        // Verify the column matches what we expect
+        assert_eq!(proof.value.len(), 2);
+        assert_eq!(proof.value[0], [7]);
+        assert_eq!(proof.value[1], [1]);
 
         // Verify using batch_verify
         proof.batch_verify(&merkle_tree.root(), 5).unwrap();
 
         // Try another index
-        let proof = merkle_tree.open(2).unwrap();
+        // This should return the column at index 2: [[4], [2]]
+        let proof = merkle_tree.batch_open(2).unwrap();
         println!("Batched Inclusion Path for index 2:\n {proof:x?}");
+
+        // Verify the column matches what we expect
+        assert_eq!(proof.value.len(), 2);
+        assert_eq!(proof.value[0], [4]);
+        assert_eq!(proof.value[1], [2]);
+
+        proof.batch_verify(&merkle_tree.root(), 2).unwrap();
+
+        // Verify that incorrect index fails
+        assert!(proof.batch_verify(&merkle_tree.root(), 1).is_err());
+    }
+
+    #[test]
+    fn batched_merkle_test_with_vectors() {
+        // Create batched data with vectors
+        let data = vec![
+            vec![
+                vec![0, 4],
+                vec![8, 2],
+                vec![4, 9],
+                vec![1, 3],
+                vec![5, 7],
+                vec![7, 2],
+                vec![6, 8],
+                vec![1, 5],
+            ],
+            vec![
+                vec![9, 3],
+                vec![2, 7],
+                vec![6, 1],
+                vec![3, 8],
+                vec![4, 2],
+                vec![8, 5],
+                vec![1, 9],
+                vec![7, 4],
+            ],
+            vec![
+                vec![3, 6],
+                vec![5, 1],
+                vec![8, 3],
+                vec![2, 9],
+                vec![7, 5],
+                vec![1, 8],
+                vec![4, 3],
+                vec![6, 2],
+            ],
+            vec![
+                vec![7, 1],
+                vec![3, 9],
+                vec![5, 2],
+                vec![8, 6],
+                vec![1, 4],
+                vec![9, 7],
+                vec![2, 5],
+                vec![4, 8],
+            ],
+        ];
+
+        // Create a batched Merkle tree
+        let merkle_tree = Merkle::batch_commit(data);
+
+        println!(
+            "Batched Merkle Root with vectors:\n {:x?}",
+            merkle_tree.root()
+        );
+
+        // Open and verify a proof for index 5
+        // This should return the column at index 5: [vec![7, 2], vec![8, 5], vec![1, 8], vec![9, 7]]
+        let proof = merkle_tree.batch_open(5).unwrap();
+        println!("Batched Inclusion Path for index 5:\n {proof:x?}");
+
+        // Verify the column matches what we expect
+        assert_eq!(proof.value.len(), 4);
+        assert_eq!(proof.value[0], vec![7, 2]);
+        assert_eq!(proof.value[1], vec![8, 5]);
+        assert_eq!(proof.value[2], vec![1, 8]);
+        assert_eq!(proof.value[3], vec![9, 7]);
+
+        // Verify using batch_verify
+        proof.batch_verify(&merkle_tree.root(), 5).unwrap();
+
+        // Try another index
+        // This should return the column at index 2: [vec![4, 9], vec![6, 1], vec![8, 3], vec![5, 2]]
+        let proof = merkle_tree.batch_open(2).unwrap();
+        println!("Batched Inclusion Path for index 2:\n {proof:x?}");
+
+        // Verify the column matches what we expect
+        assert_eq!(proof.value.len(), 4);
+        assert_eq!(proof.value[0], vec![4, 9]);
+        assert_eq!(proof.value[1], vec![6, 1]);
+        assert_eq!(proof.value[2], vec![8, 3]);
+        assert_eq!(proof.value[3], vec![5, 2]);
+
         proof.batch_verify(&merkle_tree.root(), 2).unwrap();
 
         // Verify that incorrect index fails

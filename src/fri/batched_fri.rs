@@ -208,10 +208,13 @@ impl<F: HashableField + NttField> BatchedFriProverData<F> {
         // Open a query at the given index in both the batch layer and the FRI data
 
         // Open the batch layer at the index
-        let batch_layer = self.batch_layer.open(index).expect("Index out of bounds");
+        let batch_layer = self
+            .batch_layer
+            .batch_open(index)
+            .expect("Index out of bounds");
 
         // Open the query in the FRI data
-	let n = self.batch_layer.data.len() / 2;
+        let n = self.batch_layer.data.len() / 2;
         let query_proof = self.fri_data.open_query_at(index % n);
 
         BatchedQueryProof {
