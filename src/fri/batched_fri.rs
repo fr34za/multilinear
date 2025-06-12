@@ -4,7 +4,7 @@ use crate::{
     transcript::{HashableField, Transcript},
 };
 
-use super::{FriProverData, QueryProof, ReedSolomonPair};
+use super::{FriProofError, FriProverData, QueryProof, ReedSolomonPair, LOG_BLOWUP, NUM_QUERIES};
 
 pub struct BatchedFriProverData<F> {
     // batched commit
@@ -109,7 +109,7 @@ impl<F: HashableField + NttField> BatchedFriProverData<F> {
         }
 
         let n = batch_data[0].len() * 2; // Each RS pair represents 2 elements
-        let blowup = 1 << super::LOG_BLOWUP;
+        let blowup = 1 << LOG_BLOWUP;
         if n <= blowup {
             return;
         }
@@ -188,7 +188,7 @@ impl<F: HashableField + NttField> BatchedFriProverData<F> {
 
         // Get the size of the code (all codes have the same size as verified in init)
         let code_size = codes[0].len();
-        let num_steps = code_size.trailing_zeros() as usize - super::LOG_BLOWUP;
+        let num_steps = code_size.trailing_zeros() as usize - LOG_BLOWUP;
 
         // First step is a batched fold step
         let r = transcript.next_challenge();
@@ -224,6 +224,22 @@ impl<F: HashableField + NttField> BatchedFriProverData<F> {
     }
 }
 
+impl<F: HashableField + NttField> BatchedQueryProof<F> {
+    pub fn verify(
+        &self,
+        domain_size: usize,
+        gen: F,
+        commitments: &[HashDigest],
+        last_element: F,
+        random_elements: &[F],
+	fingerprint_r: F,
+        transcript: &mut Transcript,
+    ) -> Result<(), FriProofError> {
+	// similar to verify query proof, but the first layer is batched. use the fingerprint
+	todo!()
+    }
+}
+
 impl<F: HashableField + NttField> BatchedFriProof<F> {
     pub fn prove(codes: &[Vec<F>], gen_pows: &[F], transcript: &mut Transcript) -> Self {
         // Similar to normal FRI prove, but using batched operations
@@ -235,8 +251,8 @@ impl<F: HashableField + NttField> BatchedFriProof<F> {
         let prover_data = BatchedFriProverData::fold(gen_pows, codes, transcript);
 
         // Generate queries
-        let mut queries = Vec::with_capacity(super::NUM_QUERIES);
-        for _ in 0..super::NUM_QUERIES {
+        let mut queries = Vec::with_capacity(NUM_QUERIES);
+        for _ in 0..NUM_QUERIES {
             let random_u64 = u64::from_le_bytes(transcript.random()[..8].try_into().unwrap());
             // The index is half of the domain size because the merkle tree takes pairs of elements
             let random_index = random_u64 as usize % (domain_size / 2);
@@ -258,6 +274,25 @@ impl<F: HashableField + NttField> BatchedFriProof<F> {
             last_random: transcript.random(),
         }
     }
+
+    pub fn verify(&self) -> Result<(), FriProofError> {
+	// imitate the prover's transcript
+	// save all random elements in a vector
+	// save the fingerprint r
+	// then verify all the queries
+        todo!()
+    }
+
+    pub fn verify_queries(
+        &self,
+        transcript: &mut Transcript,
+        random_elements: &[F],
+	fingerprint_r: F,
+    ) -> Result<(), FriProofError> {
+	// remember the first layer is batched, so it returns a vector
+	// use the fingerprint!
+        todo!()
+    }
 }
 
 #[cfg(test)]
@@ -271,8 +306,7 @@ mod tests {
         let log_n = 4;
 
         // Calculate gen_pows for the RS code
-        let gen_pows =
-            Field128::pow_2_generator_powers((log_n + super::super::LOG_BLOWUP) as u64).unwrap();
+        let gen_pows = Field128::pow_2_generator_powers((log_n + LOG_BLOWUP) as u64).unwrap();
 
         // Create 4 different RS codes
         let mut codes = Vec::new();
@@ -309,8 +343,7 @@ mod tests {
         let log_n = 6;
 
         // Calculate gen_pows for the RS code
-        let gen_pows =
-            Field128::pow_2_generator_powers((log_n + super::super::LOG_BLOWUP) as u64).unwrap();
+        let gen_pows = Field128::pow_2_generator_powers((log_n + LOG_BLOWUP) as u64).unwrap();
 
         // Create 4 different RS codes
         let mut codes = Vec::new();
