@@ -47,13 +47,13 @@ impl<T> Merkle<T> {
                 (current_index - 1, Direction::Left)
             };
 
-            if sibling_index < layer.len() {
-                path.push((layer[sibling_index], direction));
+            if sibling_index >= layer.len() {
+                break;
             }
-
+            path.push((layer[sibling_index], direction));
             current_index /= 2;
         }
-
+        assert_eq!(path.len(), self.layers.len() - 1);
         Some(MerkleInclusionPath { value, path })
     }
 }
@@ -107,15 +107,10 @@ where
             );
         }
 
-        // Hash each batch as a whole to create the first layer
-        let first_layer: Vec<HashDigest> = data
-            .iter()
-            .map(|batch| {
-                // Create a combined hash for the entire batch
+        let first_layer: Vec<HashDigest> = (0..batch_size)
+            .map(|i| {
                 let mut hasher = Sha256::new();
-                for item in batch {
-                    hasher.update(item.as_ref());
-                }
+                data.iter().for_each(|data| hasher.update(data[i].as_ref()));
                 hasher.finalize()
             })
             .collect();
@@ -166,13 +161,13 @@ where
                 (current_index - 1, Direction::Left)
             };
 
-            if sibling_index < layer.len() {
-                path.push((layer[sibling_index], direction));
+            if sibling_index >= layer.len() {
+                break;
             }
-
+            path.push((layer[sibling_index], direction));
             current_index /= 2;
         }
-
+        assert_eq!(path.len(), self.layers.len() - 1);
         Some(MerkleInclusionPath {
             value: transposed_value,
             path,
@@ -356,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn batched_merkle_test_with_vectors() {
+    fn batched_merkle_with_vectors_test() {
         // Create batched data with vectors
         let data = vec![
             vec![
