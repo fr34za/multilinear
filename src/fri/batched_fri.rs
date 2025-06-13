@@ -232,11 +232,79 @@ impl<F: HashableField + NttField> BatchedQueryProof<F> {
         commitments: &[HashDigest],
         last_element: F,
         random_elements: &[F],
-	fingerprint_r: F,
+        fingerprint_r: F,
         transcript: &mut Transcript,
     ) -> Result<(), FriProofError> {
-	// similar to verify query proof, but the first layer is batched. use the fingerprint
-	todo!()
+        // similar to verify query proof, but the first layer is batched. use the fingerprint
+
+        // First, verify the batch layer inclusion proof
+        self.batch_layer
+            .batch_verify(&commitments[0], 0)
+            .map_err(|err| FriProofError::InclusionPathError(err))?;
+
+        // Extract values and minus_values from the batch layer
+        let values: Vec<F> = self
+            .batch_layer
+            .value
+            .iter()
+            .map(|pair| pair.value)
+            .collect();
+        let minus_values: Vec<F> = self
+            .batch_layer
+            .value
+            .iter()
+            .map(|pair| pair.minus_value)
+            .collect();
+
+        // Compute fingerprints using the fingerprint_r
+        let value = fingerprint(fingerprint_r, &values);
+        let minus_value = fingerprint(fingerprint_r, &minus_values);
+
+        // Now verify the FRI query proof using the fingerprinted values
+        let mut current_value = value;
+        let mut current_minus_value = minus_value;
+        let mut current_gen_pow = gen;
+
+        // For each fold step (except the last one)
+        for (i, r) in random_elements.iter().enumerate() {
+            if i >= commitments.len() - 1 {
+                break;
+            }
+
+            // Calculate even and odd terms
+            let even = (current_value + current_minus_value) * (F::from(1) / F::from(2));
+            let odd = (current_value - current_minus_value)
+                * (F::from(1) / (F::from(2) * current_gen_pow));
+
+            // Calculate the next value using the random element
+            current_value = even + *r * odd;
+
+            // Square the generator power for the next step
+            current_gen_pow = current_gen_pow * current_gen_pow;
+
+            // For the next step, we need to verify the FRI query proof
+            if i > 0 {
+                // Verify the merkle proof for this step
+                self.query_proof.paths[i - 1]
+                    .verify(&commitments[i], self.query_proof.paths[i - 1].value.value)
+                    .map_err(|err| FriProofError::InclusionPathError(err))?;
+
+                // Check that the value matches
+                if self.query_proof.paths[i - 1].value.value != current_value {
+                    return Err(FriProofError::QueryMismatch(i - 1));
+                }
+
+                // Update minus_value for the next step
+                current_minus_value = self.query_proof.paths[i - 1].value.minus_value;
+            }
+        }
+
+        // Verify the last element
+        if current_value != last_element {
+            return Err(FriProofError::QueryMismatch(commitments.len() - 1));
+        }
+
+        Ok(())
     }
 }
 
@@ -276,22 +344,88 @@ impl<F: HashableField + NttField> BatchedFriProof<F> {
     }
 
     pub fn verify(&self) -> Result<(), FriProofError> {
-	// imitate the prover's transcript
-	// save all random elements in a vector
-	// save the fingerprint r
-	// then verify all the queries
-        todo!()
+        // imitate the prover's transcript
+        // save all random elements in a vector
+        // save the fingerprint r
+        // then verify all the queries
+
+        // Create a new transcript to imitate the prover's transcript
+        let mut transcript = Transcript::new();
+
+        // Absorb the batch layer commitment
+        transcript.absorb(self.batch_layer_commitment.as_slice());
+
+        // Get the fingerprint r
+        let fingerprint_r: F = transcript.next_challenge();
+
+        // Absorb the fingerprint r
+        transcript.absorb(fingerprint_r.as_ref());
+
+        // Collect random elements for each fold step
+        let mut random_elements = Vec::with_capacity(self.commitments.len());
+
+        // Absorb each commitment and get the random element
+        for commitment in &self.commitments {
+            transcript.absorb(commitment.as_slice());
+            let r: F = transcript.next_challenge();
+            random_elements.push(r);
+        }
+
+        // Absorb the last element
+        transcript.absorb(self.last_elem.as_ref());
+
+        // Verify all queries
+        self.verify_queries(&mut transcript, &random_elements, fingerprint_r)
     }
 
     pub fn verify_queries(
         &self,
         transcript: &mut Transcript,
         random_elements: &[F],
-	fingerprint_r: F,
+        fingerprint_r: F,
     ) -> Result<(), FriProofError> {
-	// remember the first layer is batched, so it returns a vector
-	// use the fingerprint!
-        todo!()
+        // remember the first layer is batched, so it returns a vector
+        // use the fingerprint!
+
+        // Check if the number of queries is correct
+        if self.queries.len() != NUM_QUERIES {
+            return Err(FriProofError::WrongNumberOfQueries);
+        }
+
+        // Calculate the domain size based on the number of commitments and LOG_BLOWUP
+        let log_domain_size = self.commitments.len() + LOG_BLOWUP;
+        let domain_size = 1 << log_domain_size;
+
+        // Get the generator for the domain
+        let gen = F::pow_2_generator(log_domain_size as u64).unwrap();
+
+        // Verify each query
+        for query in &self.queries {
+            // Get the random index from the transcript
+            let random_u64 = u64::from_le_bytes(transcript.random()[..8].try_into().unwrap());
+            let random_index = random_u64 as usize % (domain_size / 2);
+
+            // Verify the query at this index
+            query.verify(
+                domain_size,
+                gen,
+                &[self.batch_layer_commitment], // First layer is the batch layer
+                self.last_elem,
+                random_elements,
+                fingerprint_r,
+                transcript,
+            )?;
+
+            // Absorb the index to match the prover's transcript
+            transcript.absorb(&random_index.to_le_bytes());
+        }
+
+        // Check if the last random value matches
+        if self.last_random != transcript.random() {
+            return Err(FriProofError::IncompatibleLastRandom);
+        }
+
+        Ok(())
     }
 }
 
