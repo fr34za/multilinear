@@ -182,25 +182,19 @@ pub struct QueryProof<F> {
 impl<F: HashableField + NttField> QueryProof<F> {
     pub fn verify(
         &self,
-        domain_size: usize,
-        gen: F,
         commitments: &[HashDigest],
         last_element: F,
+        n: usize,
+        index: usize,
+        gen: F,
         random_elements: &[F],
-        transcript: &mut Transcript,
     ) -> Result<(), FriProofError> {
         if self.paths.len() != commitments.len() {
             return Err(FriProofError::WrongNumberOfPaths);
         }
 
-        let n = domain_size / 2;
-        let random_u64 = u64::from_le_bytes(transcript.random()[..8].try_into().unwrap());
-        // the index is half of the domain size because the merkle tree takes pairs of elements
-        let random_index = random_u64 as usize % n;
-        transcript.absorb(&random_index.to_le_bytes());
-
         let mut current_n = n;
-        let mut current_index = random_index;
+        let mut current_index = index;
         let mut current_gen = gen;
         for i in 0..self.paths.len() {
             let path = &self.paths[i];
@@ -323,13 +317,18 @@ impl<F: HashableField + NttField> FriProof<F> {
         let gen = F::pow_2_generator(log_domain_size as u64).unwrap();
         // Simulate the "query" stage
         for query in &self.queries {
+            let n = domain_size / 2;
+            let random_u64 = u64::from_le_bytes(transcript.random()[..8].try_into().unwrap());
+            // the index is half of the domain size because the merkle tree takes pairs of elements
+            let random_index = random_u64 as usize % n;
+            transcript.absorb(&random_index.to_le_bytes());
             query.verify(
-                domain_size,
-                gen,
                 &self.commitments,
                 self.last_elem,
+                n,
+                random_index,
+                gen,
                 random_elements,
-                transcript,
             )?;
         }
 

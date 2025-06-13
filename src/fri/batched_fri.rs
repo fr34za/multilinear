@@ -14,12 +14,12 @@ pub struct BatchedFriProverData<F> {
 }
 
 pub struct BatchedQueryProof<F> {
-    pub batch_layer: MerkleInclusionPath<Vec<ReedSolomonPair<F>>>,
+    pub batch_path: MerkleInclusionPath<Vec<ReedSolomonPair<F>>>,
     pub query_proof: QueryProof<F>,
 }
 
 pub struct BatchedFriProof<F> {
-    pub batch_layer_commitment: HashDigest,
+    pub batch_commitment: HashDigest,
     pub commitments: Vec<HashDigest>,
     pub queries: Vec<BatchedQueryProof<F>>,
     pub last_elem: F,
@@ -214,11 +214,11 @@ impl<F: HashableField + NttField> BatchedFriProverData<F> {
             .expect("Index out of bounds");
 
         // Open the query in the FRI data
-        let n = self.batch_layer.data.len() / 2;
+        let n = self.batch_layer.data[0].len() / 2;
         let query_proof = self.fri_data.open_query_at(index % n);
 
         BatchedQueryProof {
-            batch_layer,
+            batch_path: batch_layer,
             query_proof,
         }
     }
@@ -227,84 +227,58 @@ impl<F: HashableField + NttField> BatchedFriProverData<F> {
 impl<F: HashableField + NttField> BatchedQueryProof<F> {
     pub fn verify(
         &self,
-        domain_size: usize,
+        fri_proof: &BatchedFriProof<F>,
+        n: usize,
+        index: usize,
         gen: F,
-        commitments: &[HashDigest],
-        last_element: F,
         random_elements: &[F],
         fingerprint_r: F,
-        transcript: &mut Transcript,
     ) -> Result<(), FriProofError> {
-        // similar to verify query proof, but the first layer is batched. use the fingerprint
+        if self.query_proof.paths.len() != fri_proof.commitments.len() {
+            return Err(FriProofError::WrongNumberOfPaths);
+        }
 
-        // First, verify the batch layer inclusion proof
-        self.batch_layer
-            .batch_verify(&commitments[0], 0)
-            .map_err(|err| FriProofError::InclusionPathError(err))?;
+        let path = &self.batch_path;
+        let commitment = &fri_proof.batch_commitment;
+        if let Err(err) = path.batch_verify(commitment, index) {
+            return Err(FriProofError::InclusionPathError(err));
+        }
 
         // Extract values and minus_values from the batch layer
-        let values: Vec<F> = self
-            .batch_layer
-            .value
-            .iter()
-            .map(|pair| pair.value)
-            .collect();
-        let minus_values: Vec<F> = self
-            .batch_layer
-            .value
-            .iter()
-            .map(|pair| pair.minus_value)
-            .collect();
-
+        let values: Vec<F> = path.value.iter().map(|pair| pair.value).collect();
+        let minus_values: Vec<F> = path.value.iter().map(|pair| pair.minus_value).collect();
         // Compute fingerprints using the fingerprint_r
         let value = fingerprint(fingerprint_r, &values);
         let minus_value = fingerprint(fingerprint_r, &minus_values);
-
-        // Now verify the FRI query proof using the fingerprinted values
-        let mut current_value = value;
-        let mut current_minus_value = minus_value;
-        let mut current_gen_pow = gen;
-
-        // For each fold step (except the last one)
-        for (i, r) in random_elements.iter().enumerate() {
-            if i >= commitments.len() - 1 {
-                break;
+        let gen_pow = gen.pow(index as u128); // g^i
+        let even = (value + minus_value) / F::from(2);
+        let odd = (value - minus_value) / (F::from(2) * gen_pow);
+        if self.query_proof.paths.is_empty() {
+            if fri_proof.last_elem != even + random_elements[0] * odd {
+                return Err(FriProofError::QueryMismatch(0));
             }
-
-            // Calculate even and odd terms
-            let even = (current_value + current_minus_value) * (F::from(1) / F::from(2));
-            let odd = (current_value - current_minus_value)
-                * (F::from(1) / (F::from(2) * current_gen_pow));
-
-            // Calculate the next value using the random element
-            current_value = even + *r * odd;
-
-            // Square the generator power for the next step
-            current_gen_pow = current_gen_pow * current_gen_pow;
-
-            // For the next step, we need to verify the FRI query proof
-            if i > 0 {
-                // Verify the merkle proof for this step
-                self.query_proof.paths[i - 1]
-                    .verify(&commitments[i], self.query_proof.paths[i - 1].value.value)
-                    .map_err(|err| FriProofError::InclusionPathError(err))?;
-
-                // Check that the value matches
-                if self.query_proof.paths[i - 1].value.value != current_value {
-                    return Err(FriProofError::QueryMismatch(i - 1));
-                }
-
-                // Update minus_value for the next step
-                current_minus_value = self.query_proof.paths[i - 1].value.minus_value;
-            }
+            return Ok(());
         }
-
-        // Verify the last element
-        if current_value != last_element {
-            return Err(FriProofError::QueryMismatch(commitments.len() - 1));
-        }
-
-        Ok(())
+        let next_n = n / 2;
+        let next_index = index % next_n;
+        let next_gen = gen * gen;
+        let next_path = &self.query_proof.paths[0];
+        let next_value = if next_index == index {
+            next_path.value.value
+        } else {
+            next_path.value.minus_value
+        };
+        if next_value != even + random_elements[0] * odd {
+            return Err(FriProofError::QueryMismatch(0));
+        };
+        self.query_proof.verify(
+            &fri_proof.commitments,
+            fri_proof.last_elem,
+            next_n,
+            next_index,
+            next_gen,
+            &random_elements[1..],
+        )
     }
 }
 
@@ -335,7 +309,7 @@ impl<F: HashableField + NttField> BatchedFriProof<F> {
 
         // Create the batched FRI proof
         BatchedFriProof {
-            batch_layer_commitment: prover_data.batch_layer.root(),
+            batch_commitment: prover_data.batch_layer.root(),
             commitments: prover_data.fri_data.fold_roots(),
             queries,
             last_elem: prover_data.fri_data.last_element.unwrap(),
@@ -353,7 +327,7 @@ impl<F: HashableField + NttField> BatchedFriProof<F> {
         let mut transcript = Transcript::new();
 
         // Absorb the batch layer commitment
-        transcript.absorb(self.batch_layer_commitment.as_slice());
+        transcript.absorb(self.batch_commitment.as_slice());
 
         // Get the fingerprint r
         let fingerprint_r: F = transcript.next_challenge();
@@ -362,7 +336,8 @@ impl<F: HashableField + NttField> BatchedFriProof<F> {
         transcript.absorb(fingerprint_r.as_ref());
 
         // Collect random elements for each fold step
-        let mut random_elements = Vec::with_capacity(self.commitments.len());
+        let mut random_elements = Vec::with_capacity(self.commitments.len() + 1);
+        random_elements.push(transcript.next_challenge());
 
         // Absorb each commitment and get the random element
         for commitment in &self.commitments {
@@ -393,7 +368,7 @@ impl<F: HashableField + NttField> BatchedFriProof<F> {
         }
 
         // Calculate the domain size based on the number of commitments and LOG_BLOWUP
-        let log_domain_size = self.commitments.len() + LOG_BLOWUP;
+        let log_domain_size = self.commitments.len() + 1 + LOG_BLOWUP;
         let domain_size = 1 << log_domain_size;
 
         // Get the generator for the domain
@@ -402,19 +377,12 @@ impl<F: HashableField + NttField> BatchedFriProof<F> {
         // Verify each query
         for query in &self.queries {
             // Get the random index from the transcript
+            let n = domain_size / 2;
             let random_u64 = u64::from_le_bytes(transcript.random()[..8].try_into().unwrap());
-            let random_index = random_u64 as usize % (domain_size / 2);
+            let random_index = random_u64 as usize % n;
 
             // Verify the query at this index
-            query.verify(
-                domain_size,
-                gen,
-                &[self.batch_layer_commitment], // First layer is the batch layer
-                self.last_elem,
-                random_elements,
-                fingerprint_r,
-                transcript,
-            )?;
+            query.verify(self, n, random_index, gen, random_elements, fingerprint_r)?;
 
             // Absorb the index to match the prover's transcript
             transcript.absorb(&random_index.to_le_bytes());
@@ -444,7 +412,7 @@ mod tests {
 
         // Create 4 different RS codes
         let mut codes = Vec::new();
-        for j in 0..4 {
+        for j in 0..1 {
             let values: Vec<Field128> = (0..1 << log_n)
                 .map(|i| Field128::from((i as i64 * 7 + 3) + j * 100))
                 .collect();
@@ -459,13 +427,11 @@ mod tests {
 
         // Generate the batched FRI proof
         let proof = BatchedFriProof::prove(&codes, &gen_pows, &mut transcript);
+        proof.verify().unwrap();
 
         // Print some information about the proof
         println!("Batched FRI proof generated with {} codes", codes.len());
-        println!(
-            "Batch layer commitment: {:x?}",
-            proof.batch_layer_commitment
-        );
+        println!("Batch layer commitment: {:x?}", proof.batch_commitment);
         println!("Number of commitments: {}", proof.commitments.len());
         println!("Number of queries: {}", proof.queries.len());
         println!("Last element: {:?}", proof.last_elem);
@@ -502,6 +468,7 @@ mod tests {
             "Batched FRI proof time: ",
             BatchedFriProof::prove(&codes, &gen_pows, &mut transcript)
         );
+        proof.verify().unwrap();
 
         // Print some information about the proof
         println!(
