@@ -1,4 +1,5 @@
 pub mod batched_fri;
+pub mod batched_pcs;
 pub mod multilinear_pcs;
 
 use crate::merkle_tree::{HashDigest, Merkle, MerkleInclusionPath, MerkleInclusionPathError};
