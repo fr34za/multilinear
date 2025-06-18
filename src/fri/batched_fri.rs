@@ -27,12 +27,12 @@ pub struct BatchedFriProof<F> {
 }
 
 // USEFUL FUNCTION. USE ITERATORS `impl Iterator<Item = F>` INSTEAD OF ARRAY SLICES
-fn fingerprint<F: NttField>(r: F, coeffs: &[F]) -> F {
+pub(crate) fn fingerprint<F: NttField, Iter: Iterator<Item = F>>(r: F, coeffs: Iter) -> F {
     // Compute a fingerprint of the coefficients using Horner's method:
     // result = coeffs[0] + r*coeffs[1] + r^2*coeffs[2] + ... + r^(n-1)*coeffs[n-1]
     let mut result = F::from(0);
     for coeff in coeffs {
-        result = result * r + *coeff;
+        result = result * r + coeff;
     }
     result
 }
@@ -123,12 +123,12 @@ impl<F: HashableField + NttField> BatchedFriProverData<F> {
         // For each position, compute fingerprint across all batches
         for i in 0..half_n {
             // Collect values and minus_values from all batches at position i
-            let values: Vec<F> = batch_data.iter().map(|data| data[i].value).collect();
-            let minus_values: Vec<F> = batch_data.iter().map(|data| data[i].minus_value).collect();
+            let values = batch_data.iter().map(|data| data[i].value);
+            let minus_values = batch_data.iter().map(|data| data[i].minus_value);
 
             // Compute fingerprints
-            let a = fingerprint(self.fingerprint_r, &values);
-            let b = fingerprint(self.fingerprint_r, &minus_values);
+            let a = fingerprint(self.fingerprint_r, values);
+            let b = fingerprint(self.fingerprint_r, minus_values);
 
             if i == 0 {
                 // The first case is special since gen_pows[0] == 1
@@ -245,11 +245,11 @@ impl<F: HashableField + NttField> BatchedQueryProof<F> {
         }
 
         // Extract values and minus_values from the batch layer
-        let values: Vec<F> = path.value.iter().map(|pair| pair.value).collect();
-        let minus_values: Vec<F> = path.value.iter().map(|pair| pair.minus_value).collect();
+        let values = path.value.iter().map(|pair| pair.value);
+        let minus_values = path.value.iter().map(|pair| pair.minus_value);
         // Compute fingerprints using the fingerprint_r
-        let value = fingerprint(fingerprint_r, &values);
-        let minus_value = fingerprint(fingerprint_r, &minus_values);
+        let value = fingerprint(fingerprint_r, values);
+        let minus_value = fingerprint(fingerprint_r, minus_values);
         let gen_pow = gen.pow(index as u128); // g^i
         let even = (value + minus_value) / F::from(2);
         let odd = (value - minus_value) / (F::from(2) * gen_pow);
