@@ -1,3 +1,5 @@
+pub mod batched_fri;
+pub mod batched_pcs;
 pub mod multilinear_pcs;
 
 use crate::merkle_tree::{HashDigest, Merkle, MerkleInclusionPath, MerkleInclusionPathError};
@@ -7,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub struct FriProverData<F> {
     // Now using Merkle<ReedSolomonPair<F>>
-    pub commitments: Vec<Merkle<ReedSolomonPair<F>>>,
+    pub merkle_trees: Vec<Merkle<ReedSolomonPair<F>>>,
     pub last_element: Option<F>,
 }
 
@@ -60,22 +62,22 @@ impl<F: HashableField + NttField> FriProverData<F> {
             "Input size must be a power of two"
         );
         // commit to a `Merkle` tree using `to_bytes` method.
-        let mut commitments = Vec::new();
-        let merkle = commit_rs_code(code);
-        let root = merkle.root();
+        let mut merkle_trees = Vec::new();
+        let merkle_tree = commit_rs_code(code);
+        let root = merkle_tree.root();
         // add to `commitments`.
-        commitments.push(merkle);
+        merkle_trees.push(merkle_tree);
         // Use the `root()` to update the transcript
         transcript.absorb(root.as_slice());
         Self {
-            commitments,
+            merkle_trees,
             last_element: None,
         }
     }
 
     #[allow(clippy::needless_range_loop)]
     pub fn fold_step(&mut self, gen_pows: &[F], k: usize, r: F, transcript: &mut Transcript) {
-        let last_data = self.commitments.last().unwrap().data.clone();
+        let last_data = self.merkle_trees.last().unwrap().data.clone();
         let n = last_data.len() * 2;
         let blowup = 1 << LOG_BLOWUP;
         if n <= blowup {
@@ -125,7 +127,7 @@ impl<F: HashableField + NttField> FriProverData<F> {
         // `commit` to Merkle, etc
         let merkle = commit_rs_code(&next_data);
         let root = merkle.root();
-        self.commitments.push(merkle);
+        self.merkle_trees.push(merkle);
 
         // Use the `root()` to update the transcript
         transcript.absorb(root.as_slice());
@@ -143,21 +145,21 @@ impl<F: HashableField + NttField> FriProverData<F> {
     }
 
     pub fn fold_roots(&self) -> Vec<HashDigest> {
-        self.commitments
+        self.merkle_trees
             .iter()
             .map(|merkle| merkle.root())
             .collect()
     }
 
     pub fn open_query_at(&self, index: usize) -> QueryProof<F> {
-        let n = self.commitments[0].data.len();
+        let n = self.merkle_trees[0].data.len();
         assert!(index < n);
 
         let mut paths = Vec::new();
         let mut current_index = index;
         let mut current_n = n;
 
-        for merkle in &self.commitments {
+        for merkle in &self.merkle_trees {
             // Open only once, as it opens both elements
             let path = merkle.open(current_index).expect("Index out of bounds");
 
@@ -181,25 +183,19 @@ pub struct QueryProof<F> {
 impl<F: HashableField + NttField> QueryProof<F> {
     pub fn verify(
         &self,
-        domain_size: usize,
-        gen: F,
         commitments: &[HashDigest],
         last_element: F,
+        n: usize,
+        index: usize,
+        gen: F,
         random_elements: &[F],
-        transcript: &mut Transcript,
     ) -> Result<(), FriProofError> {
         if self.paths.len() != commitments.len() {
             return Err(FriProofError::WrongNumberOfPaths);
         }
 
-        let n = domain_size / 2;
-        let random_u64 = u64::from_le_bytes(transcript.random()[..8].try_into().unwrap());
-        // the index is half of the domain size because the merkle tree takes pairs of elements
-        let random_index = random_u64 as usize % n;
-        transcript.absorb(&random_index.to_le_bytes());
-
         let mut current_n = n;
-        let mut current_index = random_index;
+        let mut current_index = index;
         let mut current_gen = gen;
         for i in 0..self.paths.len() {
             let path = &self.paths[i];
@@ -322,13 +318,18 @@ impl<F: HashableField + NttField> FriProof<F> {
         let gen = F::pow_2_generator(log_domain_size as u64).unwrap();
         // Simulate the "query" stage
         for query in &self.queries {
+            let n = domain_size / 2;
+            let random_u64 = u64::from_le_bytes(transcript.random()[..8].try_into().unwrap());
+            // the index is half of the domain size because the merkle tree takes pairs of elements
+            let random_index = random_u64 as usize % n;
+            transcript.absorb(&random_index.to_le_bytes());
             query.verify(
-                domain_size,
-                gen,
                 &self.commitments,
                 self.last_elem,
+                n,
+                random_index,
+                gen,
                 random_elements,
-                transcript,
             )?;
         }
 

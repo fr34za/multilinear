@@ -54,7 +54,6 @@ impl<F: HashableField + NttField> PCSProverData<F> {
         let mut previous_sum = output;
         // Define the composition function
         let composition = &|x: &[F]| x[0];
-        // TODO Why 2 and not 1???
         let total_degree = 2;
         for k in 0..num_steps {
             // Compute the sumcheck polynomial
@@ -94,15 +93,15 @@ impl<F: HashableField + NttField> PCSProof<F> {
         poly: MultilinearPolynomialEvals<F>,
         transcript: &mut Transcript,
     ) -> Self {
+        // Compute gen_pows for the RS code
+        let log_domain_size = poly.evals.len().trailing_zeros() as u64 + LOG_BLOWUP as u64;
+        let gen_pows = F::pow_2_generator_powers(log_domain_size).unwrap();
+        let gen = gen_pows[1];
+
         // First, convert the polynomial to canonical form
         let mut coeffs = poly.to_coefficient();
         // bit reverse to change endianess
         bit_reverse_permutation(&mut coeffs.coeffs);
-
-        // Compute gen_pows for the RS code
-        let log_domain_size = coeffs.coeffs.len().trailing_zeros() as u64 + LOG_BLOWUP as u64;
-        let gen_pows = F::pow_2_generator_powers(log_domain_size).unwrap();
-        let gen = gen_pows[1];
 
         // Then compute the RS code of the canonical coefficients
         let code = reed_solomon(coeffs.coeffs, gen);
