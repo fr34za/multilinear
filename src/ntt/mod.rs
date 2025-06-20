@@ -7,6 +7,11 @@ pub struct Polynomial<F> {
     pub coeffs: Vec<F>,
 }
 
+pub struct BatchedPolynomial<F> {
+    pub coeffs: Vec<F>,
+    pub width: usize,
+}
+
 pub trait NttField: Field {
     fn modulus() -> u128;
 
@@ -126,6 +131,19 @@ pub fn bit_reverse_permutation<F>(values: &mut [F]) {
 pub struct LagrangePolynomial<F> {
     pub gen: F,
     pub evals: Vec<F>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BatchedLagrangePolynomial<F> {
+    pub gen: F,
+    pub evals: Vec<F>,
+    pub width: usize,
+}
+
+impl<F: NttField> BatchedPolynomial<F> {
+    pub fn ntt(&self, gen: F) -> BatchedLagrangePolynomial<F> {
+        todo!()
+    }
 }
 
 impl<F: NttField> LagrangePolynomial<F> {
