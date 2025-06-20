@@ -128,7 +128,7 @@ impl<F: HashableField + NttField> BatchedPCSProverData<F> {
 
 impl<F: HashableField + NttField> BatchedPCSProof<F> {
     pub fn prove(
-        self,
+        claim: BatchedPCSClaim<F>,
         poly: &[MultilinearPolynomialEvals<F>],
         transcript: &mut Transcript,
     ) -> Self {
@@ -150,7 +150,7 @@ impl<F: HashableField + NttField> BatchedPCSProof<F> {
 
         // Run the Batched PCS fold
         let prover_data =
-            BatchedPCSProverData::fold(&self.claim, poly, &gen_pows, &codes_for_fri, transcript);
+            BatchedPCSProverData::fold(&claim, poly, &gen_pows, &codes_for_fri, transcript);
 
         // Do the queries, similar to FRI
         let domain_size = 1 << log_domain_size;
@@ -175,7 +175,7 @@ impl<F: HashableField + NttField> BatchedPCSProof<F> {
         BatchedPCSProof {
             fri_proof,
             sumcheck_polynomials: prover_data.sumcheck_polynomials,
-            claim: self.claim,
+            claim,
         }
     }
 
@@ -256,59 +256,51 @@ impl<F: HashableField + NttField> BatchedPCSProof<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        benchmark, field::Field128, polynomials::MultilinearPolynomial, transcript::Transcript,
-    };
+    use crate::{benchmark, field::Field128, transcript::Transcript};
 
     #[test]
     fn batched_pcs_verify_test() {
-        use generic_array::{typenum::U32, GenericArray};
-
         // Define parameters for the test
-        let log_n = 4;
-        let n = 1 << log_n;
-        let num_polys = 2;
+        let n_vars = 20;
+        let height = 1 << n_vars;
+        let num_polys = 10;
 
         // Generate some random polynomials
-        let mut polys = Vec::new();
+        let mut polys = Vec::with_capacity(num_polys);
+        let mut outputs = Vec::with_capacity(num_polys);
+        let inputs = (0..n_vars)
+            .map(|i| Field128::from(i as i64))
+            .collect::<Vec<_>>();
         for i in 0..num_polys {
-            let mut evals = Vec::with_capacity(n);
-            for j in 0..n {
+            let mut evals = Vec::with_capacity(height);
+            for j in 0..height {
                 evals.push(Field128::from(
                     ((j as u64 * 3 + i as u64 * 5) % 100) as u128,
                 ));
             }
-            polys.push(MultilinearPolynomialEvals { evals });
+            let multilinear = MultilinearPolynomialEvals { evals };
+            let output = multilinear.evaluate(&inputs);
+            polys.push(multilinear);
+            outputs.push(output);
         }
 
         // Create a BatchedPCSClaim (example values)
-        let claim = BatchedPCSClaim {
-            inputs: vec![Field128::from(1), Field128::from(2)],
-            outputs: vec![Field128::from(10), Field128::from(20)],
-        };
+        let claim = BatchedPCSClaim { inputs, outputs };
 
         // Create a transcript
         let mut transcript = Transcript::new();
-
-        // Create an initial BatchedPCSProof instance with the claim
-        let initial_proof = BatchedPCSProof {
-            fri_proof: BatchedFriProof {
-                batch_commitment: GenericArray::<u8, U32>::default(),
-                commitments: vec![],
-                queries: vec![],
-                last_elem: Field128::from(0),
-                last_random: [0; 32],
-            },
-            sumcheck_polynomials: vec![],
-            claim,
-        };
-
         // Prove the Batched PCS
-        let proof = initial_proof.prove(&polys, &mut transcript);
+        let proof = benchmark!(
+            "Batched PCS proof ",
+            BatchedPCSProof::prove(claim, &polys, &mut transcript)
+        );
 
         // Verify the Batched PCS proof
         let mut verifier_transcript = Transcript::new();
-        proof.verify(&mut verifier_transcript).unwrap();
+        benchmark!(
+            "Batched PCS verification ",
+            proof.verify(&mut verifier_transcript).unwrap()
+        );
 
         println!("Batched PCS proof generated and verified successfully!");
     }
