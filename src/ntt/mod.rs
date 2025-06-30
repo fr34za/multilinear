@@ -158,13 +158,9 @@ impl<F: NttField> BatchedPolynomial<F> {
         let mut batched_values = self.coeffs.clone();
 
         // Process each polynomial in the batch
-        for batch_idx in 0..self.width {
-            let start = batch_idx * poly_len;
-            let end = start + poly_len;
-            let mut poly_values = batched_values[start..end].to_vec();
-
+        for poly_values in batched_values.chunks_mut(poly_len) {
             // Apply NTT to this polynomial
-            bit_reverse_permutation(&mut poly_values);
+            bit_reverse_permutation(poly_values);
 
             // unroll the first step
             for i in (0..poly_len).step_by(2) {
@@ -195,9 +191,6 @@ impl<F: NttField> BatchedPolynomial<F> {
                 }
                 len *= 2;
             }
-
-            // Copy back the transformed polynomial
-            batched_values[start..end].copy_from_slice(&poly_values);
         }
 
         BatchedLagrangePolynomial {
@@ -272,13 +265,9 @@ impl<F: NttField> BatchedLagrangePolynomial<F> {
         let gen_inv = F::from(1) / self.gen;
 
         // Process each polynomial in the batch
-        for batch_idx in 0..self.width {
-            let start = batch_idx * poly_len;
-            let end = start + poly_len;
-            let mut poly_values = batched_values[start..end].to_vec();
-
+        for poly_values in batched_values.chunks_mut(poly_len) {
             // Apply INTT to this polynomial
-            bit_reverse_permutation(&mut poly_values);
+            bit_reverse_permutation(poly_values);
 
             // unroll the first step
             for i in (0..poly_len).step_by(2) {
@@ -313,9 +302,6 @@ impl<F: NttField> BatchedLagrangePolynomial<F> {
             // Apply normalization
             let n_inv = F::from(1) / F::from(poly_len as i64);
             poly_values.iter_mut().for_each(|val| *val *= n_inv);
-
-            // Copy back the transformed polynomial
-            batched_values[start..end].copy_from_slice(&poly_values);
         }
 
         BatchedPolynomial {
@@ -414,18 +400,39 @@ mod tests {
 
     #[test]
     fn batched_ntt_benchmark_test() {
-        let log_n = 10; // 1024 coefficients per polynomial
+        let log_n = 20;
         let poly_len = 1 << log_n;
-        let width = 4; // 4 polynomials in batch
+        let width = 20;
         let total_len = poly_len * width;
 
         let coeffs: Vec<F> = (0..total_len).map(|i| F::from(i as i64)).collect();
         let batched_poly = BatchedPolynomial::<F> { coeffs, width };
-
         let gen = F::pow_2_generator(log_n as u64).unwrap();
-        let batched_ntt = benchmark!("Batched NTT ", batched_poly.ntt(gen));
-        let batched_intt = benchmark!("Batched INTT ", batched_ntt.intt());
-
+        // println!("Warming up...");
+        // batched_poly.ntt(gen);
+        // batched_poly.ntt(gen);
+        let batched_ntt = benchmark!(
+            "Batched NTT of length {poly_len} and width {width}",
+            batched_poly.ntt(gen)
+        );
+        let batched_intt = benchmark!(
+            "Batched INTT of length {poly_len} and width {width}",
+            batched_ntt.intt()
+        );
         assert_eq!(batched_poly.coeffs, batched_intt.coeffs);
+
+        let mut polys = vec![];
+        for i in 0..width {
+            let coeffs = (0..poly_len)
+                .map(|j| F::from(i as i64 + j as i64))
+                .collect();
+            let poly = Polynomial::<F> { coeffs };
+            polys.push(poly)
+        }
+        benchmark!("{width} NTTs of length {poly_len}", {
+            for poly in polys {
+                poly.ntt(gen);
+            }
+        })
     }
 }
