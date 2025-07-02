@@ -199,6 +199,95 @@ impl<F: NttField> BatchedPolynomial<F> {
             width: self.width,
         }
     }
+
+    fn dft_batch(self, twiddles: &[F]) -> BatchedLagrangePolynomial<F> {
+        let width = self.width;
+        let total_len = self.coeffs.len();
+        let mut evals = self.coeffs;
+        let h = total_len / width;
+        let log_h = h.trailing_zeros() as usize;
+
+        // DIT butterfly
+        reverse_matrix_index_bits(&mut evals, width, h, log_h);
+        for layer in 0..log_h {
+            dit_layer(&mut evals, width, h, log_h, layer, twiddles);
+        }
+        BatchedLagrangePolynomial {
+            evals,
+            width,
+            gen: twiddles[1],
+        }
+    }
+}
+
+fn dit_layer<F: Field>(
+    mat: &mut [F],
+    width: usize,
+    h: usize,
+    log_h: usize,
+    layer: usize,
+    twiddles: &[F],
+) {
+    let layer_rev = log_h - 1 - layer;
+    // Each butterfly operates on 2 rows; this is the number of rows in half a block
+    let half_block_size = width << layer;
+    // Each block contains 2^layer * 2 rows; full size of the butterfly block
+    let block_size = half_block_size * 2;
+
+    // Process the matrix in blocks of rows of size `block_size`
+    mat.chunks_exact_mut(block_size)
+        .for_each(|mut block_chunks| {
+            // Split each block vertically into top (hi) and bottom (lo) halves
+            let (mut hi_chunks, mut lo_chunks) = block_chunks.split_at_mut(half_block_size);
+            // For each pair of rows (hi, lo), apply a butterfly
+            hi_chunks
+                .chunks_exact_mut(width)
+                .zip(lo_chunks.chunks_exact_mut(width))
+                .enumerate()
+                .for_each(|(ind, (hi_chunk, lo_chunk))| {
+                    if ind == 0 {
+                        // The first pair doesn't require a twiddle factor
+                        TwiddleFreeButterfly.apply_to_rows(hi_chunk, lo_chunk)
+                    } else {
+                        // Apply DIT butterfly using the twiddle factor at index `ind << layer_rev`
+                        DitButterfly(twiddles[ind << layer_rev]).apply_to_rows(hi_chunk, lo_chunk)
+                    }
+                });
+        });
+}
+
+pub fn reverse_matrix_index_bits<F>(mat: &mut [F], w: usize, h: usize, log_h: usize) {
+    let values = mat.as_mut_ptr() as usize;
+
+    // SAFETY: Due to the i < j check, we are guaranteed that `swap_rows_raw
+    // will never try and access a particular slice of data more than once
+    // across all parallel threads. Hence the following code is safe and does
+    // not trigger undefined behaviour.
+    (0..h).into_iter().for_each(|i| {
+        let values = values as *mut F;
+        let j = reverse_bits_len(i, log_h);
+        if i < j {
+            unsafe { swap_rows_raw(values, w, i, j) };
+        }
+    });
+}
+
+unsafe fn swap_rows_raw<F>(mat: *mut F, w: usize, i: usize, j: usize) {
+    unsafe {
+        let row_i = core::slice::from_raw_parts_mut(mat.add(i * w), w);
+        let row_j = core::slice::from_raw_parts_mut(mat.add(j * w), w);
+        row_i.swap_with_slice(row_j);
+    }
+}
+
+pub const fn reverse_bits_len(x: usize, bit_len: usize) -> usize {
+    // NB: The only reason we need overflowing_shr() here as opposed
+    // to plain '>>' is to accommodate the case n == num_bits == 0,
+    // which would become `0 >> 64`. Rust thinks that any shift of 64
+    // bits causes overflow, even when the argument is zero.
+    x.reverse_bits()
+        .overflowing_shr(usize::BITS - bit_len as u32)
+        .0
 }
 
 impl<F: NttField> LagrangePolynomial<F> {
