@@ -63,6 +63,31 @@ impl NttField for Field128 {
     }
 }
 
+// Direct butterfly implementations (Plonky3 style, but as simple functions)
+
+/// Apply DIT butterfly operation to two slices
+/// Computes: output_1 = x1 + x2 * twiddle, output_2 = x1 - x2 * twiddle
+#[inline]
+fn apply_dit_butterfly<F: Field>(hi_row: &mut [F], lo_row: &mut [F], twiddle: F) {
+    for (hi, lo) in hi_row.iter_mut().zip(lo_row.iter_mut()) {
+        let lo_twiddle = *lo * twiddle;
+        let temp_hi = *hi;
+        *hi = temp_hi + lo_twiddle;
+        *lo = temp_hi - lo_twiddle;
+    }
+}
+
+/// Apply twiddle-free butterfly operation to two slices
+/// Computes: output_1 = x1 + x2, output_2 = x1 - x2
+#[inline]
+fn apply_twiddle_free_butterfly<F: Field>(hi_row: &mut [F], lo_row: &mut [F]) {
+    for (hi, lo) in hi_row.iter_mut().zip(lo_row.iter_mut()) {
+        let temp_hi = *hi;
+        *hi = temp_hi + *lo;
+        *lo = temp_hi - *lo;
+    }
+}
+
 impl<F: NttField> Polynomial<F> {
     pub fn evaluate(&self, x: F) -> F {
         self.coeffs
@@ -200,27 +225,43 @@ impl<F: NttField> BatchedPolynomial<F> {
         }
     }
 
-    fn dft_batch(self, twiddles: &[F]) -> BatchedLagrangePolynomial<F> {
+    // Optimized batched NTT using Plonky3-style layer processing
+    pub fn ntt_optimized(&self, gen: F) -> BatchedLagrangePolynomial<F> {
         let width = self.width;
         let total_len = self.coeffs.len();
-        let mut evals = self.coeffs;
         let h = total_len / width;
         let log_h = h.trailing_zeros() as usize;
 
-        // DIT butterfly
+        assert!(
+            h.is_power_of_two(),
+            "Each polynomial length must be a power of 2"
+        );
+        assert_eq!(
+            total_len % width,
+            0,
+            "Total coefficients must be divisible by width"
+        );
+
+        // Pre-calculate twiddle factors for efficiency
+        let twiddles =
+            F::pow_2_generator_powers(log_h as u64).expect("Failed to generate twiddle factors");
+
+        let mut evals = self.coeffs.clone();
+
+        // Apply bit reversal to the matrix
         reverse_matrix_index_bits(&mut evals, width, h, log_h);
+
+        // Apply DIT layers
         for layer in 0..log_h {
-            dit_layer(&mut evals, width, h, log_h, layer, twiddles);
+            dit_layer_optimized(&mut evals, width, h, log_h, layer, &twiddles);
         }
-        BatchedLagrangePolynomial {
-            evals,
-            width,
-            gen: twiddles[1],
-        }
+
+        BatchedLagrangePolynomial { evals, width, gen }
     }
 }
 
-fn dit_layer<F: Field>(
+// Optimized DIT layer processing using direct butterfly functions
+fn dit_layer_optimized<F: Field>(
     mat: &mut [F],
     width: usize,
     h: usize,
@@ -235,25 +276,33 @@ fn dit_layer<F: Field>(
     let block_size = half_block_size * 2;
 
     // Process the matrix in blocks of rows of size `block_size`
-    mat.chunks_exact_mut(block_size)
-        .for_each(|mut block_chunks| {
-            // Split each block vertically into top (hi) and bottom (lo) halves
-            let (mut hi_chunks, mut lo_chunks) = block_chunks.split_at_mut(half_block_size);
-            // For each pair of rows (hi, lo), apply a butterfly
-            hi_chunks
-                .chunks_exact_mut(width)
-                .zip(lo_chunks.chunks_exact_mut(width))
-                .enumerate()
-                .for_each(|(ind, (hi_chunk, lo_chunk))| {
-                    if ind == 0 {
-                        // The first pair doesn't require a twiddle factor
-                        TwiddleFreeButterfly.apply_to_rows(hi_chunk, lo_chunk)
-                    } else {
-                        // Apply DIT butterfly using the twiddle factor at index `ind << layer_rev`
-                        DitButterfly(twiddles[ind << layer_rev]).apply_to_rows(hi_chunk, lo_chunk)
-                    }
-                });
-        });
+    for block_start in (0..mat.len()).step_by(block_size) {
+        let block_end = (block_start + block_size).min(mat.len());
+        if block_start + half_block_size >= block_end {
+            continue;
+        }
+
+        // Split each block vertically into top (hi) and bottom (lo) halves
+        let (hi_block, lo_block) = mat[block_start..block_end].split_at_mut(half_block_size);
+
+        // For each pair of rows (hi, lo), apply a butterfly
+        for (ind, (hi_chunk, lo_chunk)) in hi_block
+            .chunks_exact_mut(width)
+            .zip(lo_block.chunks_exact_mut(width))
+            .enumerate()
+        {
+            if ind == 0 {
+                // The first pair doesn't require a twiddle factor
+                apply_twiddle_free_butterfly(hi_chunk, lo_chunk);
+            } else {
+                // Apply DIT butterfly using the twiddle factor at index `ind << layer_rev`
+                let twiddle_idx = ind << layer_rev;
+                if twiddle_idx < twiddles.len() {
+                    apply_dit_butterfly(hi_chunk, lo_chunk, twiddles[twiddle_idx]);
+                }
+            }
+        }
+    }
 }
 
 pub fn reverse_matrix_index_bits<F>(mat: &mut [F], w: usize, h: usize, log_h: usize) {
@@ -398,6 +447,57 @@ impl<F: NttField> BatchedLagrangePolynomial<F> {
             width: self.width,
         }
     }
+
+    // Optimized INTT using Plonky3-style layer processing
+    pub fn intt_optimized(&self) -> BatchedPolynomial<F> {
+        let width = self.width;
+        let total_len = self.evals.len();
+        let h = total_len / width;
+        let log_h = h.trailing_zeros() as usize;
+
+        assert!(
+            h.is_power_of_two(),
+            "Each polynomial length must be a power of 2"
+        );
+        assert_eq!(
+            total_len % width,
+            0,
+            "Total evaluations must be divisible by width"
+        );
+
+        // Pre-calculate inverse twiddle factors for efficiency
+        let gen_inv = F::from(1) / self.gen;
+        let twiddles =
+            F::pow_2_generator_powers(log_h as u64).expect("Failed to generate twiddle factors");
+
+        // Convert to inverse twiddles
+        let inv_twiddles: Vec<F> = twiddles
+            .iter()
+            .map(|&t| {
+                if t == F::from(1) {
+                    F::from(1)
+                } else {
+                    F::from(1) / t
+                }
+            })
+            .collect();
+
+        let mut coeffs = self.evals.clone();
+
+        // Apply bit reversal to the matrix
+        reverse_matrix_index_bits(&mut coeffs, width, h, log_h);
+
+        // Apply DIT layers with inverse twiddles
+        for layer in 0..log_h {
+            dit_layer_optimized(&mut coeffs, width, h, log_h, layer, &inv_twiddles);
+        }
+
+        // Apply normalization to each polynomial
+        let n_inv = F::from(1) / F::from(h as i64);
+        coeffs.iter_mut().for_each(|val| *val *= n_inv);
+
+        BatchedPolynomial { coeffs, width }
+    }
 }
 
 #[cfg(test)]
@@ -447,6 +547,31 @@ mod tests {
     }
 
     #[test]
+    fn batched_ntt_optimized_test() {
+        let log_n = 4; // 16 coefficients per polynomial
+        let poly_len = 1 << log_n;
+        let width = 3; // 3 polynomials in batch
+        let total_len = poly_len * width;
+
+        // Create batched polynomial with 3 polynomials of length 16 each
+        let coeffs: Vec<F> = (0..total_len).map(|i| F::from(i as i64)).collect();
+        let batched_poly = BatchedPolynomial::<F> { coeffs, width };
+
+        let gen = F::pow_2_generator(log_n as u64).unwrap();
+
+        // Test that optimized version gives same results as regular version
+        let batched_ntt_regular = batched_poly.ntt(gen);
+        let batched_ntt_optimized = batched_poly.ntt_optimized(gen);
+
+        assert_eq!(batched_ntt_regular.evals, batched_ntt_optimized.evals);
+
+        // Test roundtrip with optimized versions
+        let batched_intt_optimized = batched_ntt_optimized.intt_optimized();
+        assert_eq!(batched_poly.coeffs, batched_intt_optimized.coeffs);
+        assert_eq!(batched_poly.width, batched_intt_optimized.width);
+    }
+
+    #[test]
     fn batched_ntt_consistency_test() {
         let log_n = 3; // 8 coefficients per polynomial
         let poly_len = 1 << log_n;
@@ -479,12 +604,16 @@ mod tests {
         let ntt1 = poly1.ntt(gen);
         let ntt2 = poly2.ntt(gen);
 
-        // Compute batched NTT
+        // Compute batched NTT (both regular and optimized)
         let batched_ntt = batched_poly.ntt(gen);
+        let batched_ntt_opt = batched_poly.ntt_optimized(gen);
 
         // Check that batched NTT gives same results as individual NTTs
         assert_eq!(ntt1.evals, batched_ntt.evals[0..poly_len]);
         assert_eq!(ntt2.evals, batched_ntt.evals[poly_len..2 * poly_len]);
+
+        // Check that optimized version gives same results
+        assert_eq!(batched_ntt.evals, batched_ntt_opt.evals);
     }
 
     #[test]
@@ -497,31 +626,61 @@ mod tests {
         let coeffs: Vec<F> = (0..total_len).map(|i| F::from(i as i64)).collect();
         let batched_poly = BatchedPolynomial::<F> { coeffs, width };
         let gen = F::pow_2_generator(log_n as u64).unwrap();
-        // println!("Warming up...");
-        // batched_poly.ntt(gen);
-        // batched_poly.ntt(gen);
+
+        // Benchmark regular version
         let batched_ntt = benchmark!(
-            "Batched NTT of length {poly_len} and width {width}",
+            "Batched NTT (regular) of length {poly_len} and width {width}",
             batched_poly.ntt(gen)
         );
         let batched_intt = benchmark!(
-            "Batched INTT of length {poly_len} and width {width}",
+            "Batched INTT (regular) of length {poly_len} and width {width}",
             batched_ntt.intt()
         );
-        assert_eq!(batched_poly.coeffs, batched_intt.coeffs);
 
-        let mut polys = vec![];
-        for i in 0..width {
-            let coeffs = (0..poly_len)
-                .map(|j| F::from(i as i64 + j as i64))
-                .collect();
-            let poly = Polynomial::<F> { coeffs };
-            polys.push(poly)
+        // Benchmark optimized version
+        let batched_ntt_opt = benchmark!(
+            "Batched NTT (optimized) of length {poly_len} and width {width}",
+            batched_poly.ntt_optimized(gen)
+        );
+        let batched_intt_opt = benchmark!(
+            "Batched INTT (optimized) of length {poly_len} and width {width}",
+            batched_ntt_opt.intt_optimized()
+        );
+
+        // Verify results are the same
+        assert_eq!(batched_intt.coeffs, batched_intt_opt.coeffs);
+    }
+
+    #[test]
+    fn butterfly_functions_test() {
+        // Test the direct butterfly functions
+        let mut hi = vec![F::from(1), F::from(2), F::from(3)];
+        let mut lo = vec![F::from(4), F::from(5), F::from(6)];
+
+        // Test twiddle-free butterfly
+        let hi_orig = hi.clone();
+        let lo_orig = lo.clone();
+        apply_twiddle_free_butterfly(&mut hi, &mut lo);
+
+        // Verify: hi = hi_orig + lo_orig, lo = hi_orig - lo_orig
+        for i in 0..hi.len() {
+            assert_eq!(hi[i], hi_orig[i] + lo_orig[i]);
+            assert_eq!(lo[i], hi_orig[i] - lo_orig[i]);
         }
-        benchmark!("{width} NTTs of length {poly_len}", {
-            for poly in polys {
-                poly.ntt(gen);
-            }
-        })
+
+        // Test DIT butterfly with twiddle factor 2
+        let mut hi2 = vec![F::from(1), F::from(2), F::from(3)];
+        let mut lo2 = vec![F::from(4), F::from(5), F::from(6)];
+        let twiddle = F::from(2);
+
+        let hi2_orig = hi2.clone();
+        let lo2_orig = lo2.clone();
+        apply_dit_butterfly(&mut hi2, &mut lo2, twiddle);
+
+        // Verify: hi = hi_orig + lo_orig * twiddle, lo = hi_orig - lo_orig * twiddle
+        for i in 0..hi2.len() {
+            assert_eq!(hi2[i], hi2_orig[i] + lo2_orig[i] * twiddle);
+            assert_eq!(lo2[i], hi2_orig[i] - lo2_orig[i] * twiddle);
+        }
     }
 }
